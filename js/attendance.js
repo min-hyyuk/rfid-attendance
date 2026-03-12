@@ -1,20 +1,28 @@
 /**
  * attendance.js - 출퇴근 판별 로직
  *
- * 판별 규칙 (기획서 §6):
+ * 판별 규칙:
  *   오늘 출근 기록 없음          → ✅ 출근 처리
  *   오늘 출근만 있음             → ✅ 퇴근 처리
  *   오늘 출근 + 퇴근 모두 있음   → ⚠️ 이미 퇴근 완료 알림
  *
  * 로그 ID 형식: LOG20260312001
+ *
+ * ws (근무 설정) 는 부서별로 다를 수 있으므로 외부에서 주입받음.
+ * 미전달 시 기본값 사용.
  */
 const Attendance = (() => {
+  const DEFAULT_WS = {
+    start: '09:00', end: '18:00',
+    late_min: 0, early_min: 0,
+    work_days: [1, 2, 3, 4, 5],
+  };
+
   function generateLogId() {
     const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const todayLogs = Storage.getAttendanceLogs()
       .filter(l => l.log_id.startsWith('LOG' + dateStr));
-    const seq = String(todayLogs.length + 1).padStart(3, '0');
-    return `LOG${dateStr}${seq}`;
+    return `LOG${dateStr}${String(todayLogs.length + 1).padStart(3, '0')}`;
   }
 
   function todayStr() {
@@ -25,12 +33,22 @@ const Attendance = (() => {
     return isoString.slice(11, 19); // HH:MM:SS
   }
 
-  /** 두 시각(HH:MM:SS) 사이의 근무 시간 문자열 */
+  function toMin(t) {
+    const [h, m] = t.slice(0, 5).split(':').map(Number);
+    return h * 60 + m;
+  }
+
+  function calcLateMin(checkInTime, ws) {
+    if (!checkInTime) return 0;
+    return Math.max(0, toMin(checkInTime) - (toMin(ws.start) + (ws.late_min || 0)));
+  }
+
+  function calcEarlyLeaveMin(checkOutTime, ws) {
+    if (!checkOutTime) return 0;
+    return Math.max(0, (toMin(ws.end) - (ws.early_min || 0)) - toMin(checkOutTime));
+  }
+
   function calcDuration(inTime, outTime) {
-    const toMin = t => {
-      const [h, m] = t.split(':').map(Number);
-      return h * 60 + m;
-    };
     const diff = toMin(outTime) - toMin(inTime);
     if (diff <= 0) return null;
     return `${Math.floor(diff / 60)}시간 ${diff % 60}분`;
@@ -39,19 +57,15 @@ const Attendance = (() => {
   return {
     /**
      * 카드 태그 처리
-     * @returns {{ success, type, employee?, log?, message }}
+     * @param {string} cardId
+     * @param {object} [ws]  부서 근무 설정 (미전달 시 기본값 사용)
      */
-    processTag(cardId) {
-      const employee = Employees.findByCardId(cardId);
+    processTag(cardId, ws = null) {
+      const effectiveWs = ws || DEFAULT_WS;
+      const employee    = Employees.findByCardId(cardId);
 
-      // 미등록 카드
       if (!employee) {
-        return {
-          success: false,
-          type:    'unknown',
-          cardId,
-          message: `미등록 카드입니다: ${cardId}`,
-        };
+        return { success: false, type: 'unknown', cardId, message: `미등록 카드: ${cardId}` };
       }
 
       const today    = todayStr();
@@ -59,13 +73,10 @@ const Attendance = (() => {
       const checkin  = empLogs.find(l => l.type === '출근');
       const checkout = empLogs.find(l => l.type === '퇴근');
 
-      // 이미 퇴근 완료
       if (checkin && checkout) {
         return {
-          success:  false,
-          type:     'already_done',
-          employee,
-          message:  `${employee.name}님은 오늘 이미 퇴근 완료하였습니다.`,
+          success: false, type: 'already_done', employee,
+          message: `${employee.name}님은 오늘 이미 퇴근 완료하였습니다.`,
         };
       }
 
@@ -76,6 +87,7 @@ const Attendance = (() => {
         card_id:   cardId,
         emp_id:    employee.id,
         name:      employee.name,
+        dept:      employee.dept || '',
         type,
         timestamp: now.toISOString(),
         synced:    false,
@@ -83,24 +95,31 @@ const Attendance = (() => {
 
       Storage.addAttendanceLog(log);
 
+      const tStr          = timeStr(log.timestamp);
+      const lateMin       = type === '출근' ? calcLateMin(tStr, effectiveWs)      : 0;
+      const earlyLeaveMin = type === '퇴근' ? calcEarlyLeaveMin(tStr, effectiveWs) : 0;
+
       return {
-        success:  true,
-        type,
-        employee,
-        log,
-        timeStr:  timeStr(log.timestamp),
-        message:  `${employee.name} ${type} (${timeStr(log.timestamp)})`,
+        success: true, type, employee, log,
+        timeStr: tStr, lateMin, earlyLeaveMin,
+        message: `${employee.name} ${type} (${tStr})`,
       };
     },
 
     /**
-     * 오늘 전체 직원 출퇴근 현황 반환
+     * 오늘 전체 직원 출퇴근 현황
+     * @param {string|null} deptFilter  부서명 필터 (null = 전체)
+     * @param {object|null} ws          근무 설정
      */
-    getTodayStatus() {
-      const today    = todayStr();
-      const todayLogs = Storage.getLogsByDate(today);
+    getTodayStatus(deptFilter = null, ws = null) {
+      const effectiveWs = ws || DEFAULT_WS;
+      const today       = todayStr();
+      const todayLogs   = Storage.getLogsByDate(today);
 
-      return Employees.getAll().map(emp => {
+      let employees = Employees.getAll();
+      if (deptFilter) employees = employees.filter(e => e.dept === deptFilter);
+
+      return employees.map(emp => {
         const empLogs  = todayLogs.filter(l => l.emp_id === emp.id);
         const checkin  = empLogs.find(l => l.type === '출근');
         const checkout = empLogs.find(l => l.type === '퇴근');
@@ -109,19 +128,24 @@ const Attendance = (() => {
         if (checkin && checkout) status = 'left';
         else if (checkin)        status = 'present';
 
-        const checkInTime  = checkin  ? timeStr(checkin.timestamp)  : null;
-        const checkOutTime = checkout ? timeStr(checkout.timestamp) : null;
-        const duration     = (checkInTime && checkOutTime)
-          ? calcDuration(checkInTime, checkOutTime)
-          : null;
+        const checkInTime   = checkin  ? timeStr(checkin.timestamp)  : null;
+        const checkOutTime  = checkout ? timeStr(checkout.timestamp) : null;
+        const duration      = (checkInTime && checkOutTime)
+          ? calcDuration(checkInTime, checkOutTime) : null;
+        const lateMin       = checkInTime  ? calcLateMin(checkInTime, effectiveWs)       : 0;
+        const earlyLeaveMin = checkOutTime ? calcEarlyLeaveMin(checkOutTime, effectiveWs) : 0;
 
-        return { employee: emp, status, checkInTime, checkOutTime, duration };
+        return { employee: emp, status, checkInTime, checkOutTime, duration, lateMin, earlyLeaveMin };
       });
     },
 
-    /** 오늘 요약 통계 */
-    getTodaySummary() {
-      const statuses = this.getTodayStatus();
+    /**
+     * 오늘 요약 통계
+     * @param {string|null} deptFilter
+     * @param {object|null} ws
+     */
+    getTodaySummary(deptFilter = null, ws = null) {
+      const statuses = this.getTodayStatus(deptFilter, ws);
       return {
         total:   statuses.length,
         present: statuses.filter(s => s.status === 'present').length,
@@ -131,29 +155,27 @@ const Attendance = (() => {
     },
 
     /**
-     * 출퇴근 기록 조회 (기간 + 직원 필터)
+     * 출퇴근 기록 조회
      * @param {string} startDate  'YYYY-MM-DD'
      * @param {string} endDate    'YYYY-MM-DD'
-     * @param {string|null} empId  null이면 전체
+     * @param {string|null} empId
+     * @param {object|null} ws
      */
-    queryLogs(startDate, endDate, empId = null) {
+    queryLogs(startDate, endDate, empId = null, ws = null) {
+      const effectiveWs = ws || DEFAULT_WS;
       let logs = Storage.getLogsByDateRange(startDate, endDate);
       if (empId) logs = logs.filter(l => l.emp_id === empId);
 
-      // 날짜별·직원별로 출근/퇴근 쌍 구성
       const byKey = {};
       logs.forEach(log => {
         const key = `${log.timestamp.slice(0, 10)}_${log.emp_id}`;
         if (!byKey[key]) {
           byKey[key] = {
-            date:       log.timestamp.slice(0, 10),
-            emp_id:     log.emp_id,
-            name:       log.name,
-            dept:       Employees.findById(log.emp_id)?.dept || '',
-            checkIn:    null,
-            checkOut:   null,
-            duration:   null,
-            synced:     true,
+            date: log.timestamp.slice(0, 10),
+            emp_id: log.emp_id, name: log.name,
+            dept: Employees.findById(log.emp_id)?.dept || '',
+            checkIn: null, checkOut: null, duration: null,
+            lateMin: 0, earlyLeaveMin: 0, synced: true,
           };
         }
         if (log.type === '출근') byKey[key].checkIn  = timeStr(log.timestamp);
@@ -163,19 +185,19 @@ const Attendance = (() => {
 
       const rows = Object.values(byKey);
       rows.forEach(r => {
-        if (r.checkIn && r.checkOut)
-          r.duration = calcDuration(r.checkIn, r.checkOut);
+        if (r.checkIn && r.checkOut) r.duration = calcDuration(r.checkIn, r.checkOut);
+        r.lateMin       = r.checkIn  ? calcLateMin(r.checkIn, effectiveWs)       : 0;
+        r.earlyLeaveMin = r.checkOut ? calcEarlyLeaveMin(r.checkOut, effectiveWs) : 0;
       });
 
-      // 날짜 내림차순 정렬
       return rows.sort((a, b) => b.date.localeCompare(a.date));
     },
 
-    /** CSV 내보내기 문자열 생성 */
+    /** CSV 내보내기 */
     exportCSV(rows) {
-      const header = '날짜,이름,부서,출근,퇴근,근무시간';
+      const header = '날짜,이름,부서,출근,퇴근,근무시간,지각(분),조퇴(분)';
       const lines  = rows.map(r =>
-        `${r.date},${r.name},${r.dept},${r.checkIn || ''},${r.checkOut || ''},${r.duration || ''}`
+        `${r.date},${r.name},${r.dept},${r.checkIn || ''},${r.checkOut || ''},${r.duration || ''},${r.lateMin || ''},${r.earlyLeaveMin || ''}`
       );
       return [header, ...lines].join('\n');
     },

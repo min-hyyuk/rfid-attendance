@@ -29,11 +29,13 @@ const Employees = (() => {
 
     /**
      * 직원 추가
-     * @param {string} name  이름
-     * @param {string} cardId  카드 ID
-     * @param {string} dept  부서 (선택)
+     * @param {string} name
+     * @param {string} cardId
+     * @param {string} dept
+     * @param {string} hireDate   'YYYY-MM-DD' 또는 ''
+     * @param {string} leaveDate  'YYYY-MM-DD' 또는 ''
      */
-    add(name, cardId, dept = '') {
+    add(name, cardId, dept = '', hireDate = '', leaveDate = '') {
       if (!name || !cardId) throw new Error('이름과 카드 ID는 필수입니다.');
 
       const dup = this.findByCardId(cardId);
@@ -44,6 +46,8 @@ const Employees = (() => {
         card_id:    cardId.trim(),
         name:       name.trim(),
         dept:       dept.trim(),
+        hire_date:  hireDate  || null,
+        leave_date: leaveDate || null,
         created_at: new Date().toISOString(),
       };
       const list = Storage.getEmployees();
@@ -54,15 +58,14 @@ const Employees = (() => {
 
     /**
      * 직원 정보 수정
-     * @param {string} id  직원 ID
-     * @param {object} updates  변경할 필드
+     * @param {string} id
+     * @param {object} updates  변경할 필드 (hire_date, leave_date 포함 가능)
      */
     update(id, updates) {
       const list = Storage.getEmployees();
       const idx = list.findIndex(e => e.id === id);
       if (idx === -1) throw new Error('직원을 찾을 수 없습니다.');
 
-      // 카드 ID 변경 시 중복 체크
       if (updates.card_id && updates.card_id !== list[idx].card_id) {
         const dup = this.findByCardId(updates.card_id);
         if (dup) throw new Error(`이미 등록된 카드입니다. (${dup.name})`);
