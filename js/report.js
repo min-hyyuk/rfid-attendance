@@ -108,20 +108,20 @@ const Report = (() => {
    * @param {string|null} deptFilter  부서명 필터 (null = 전체)
    * @param {object|null} ws          부서 근무 설정 (null = 기본값)
    */
-  function generateHTML(year, month, companyName, deptFilter = null, ws = null) {
+  async function generateHTML(year, month, companyName, deptFilter = null, ws = null) {
     const effectiveWs = ws ? { ...DEFAULT_WS, ...ws } : DEFAULT_WS;
     const days        = daysInMonth(year, month);
     const padMonth    = pad2(month);
     const startDate   = `${year}-${padMonth}-01`;
     const endDate     = `${year}-${padMonth}-${pad2(days)}`;
 
-    let employees = Employees.getAll();
+    let [employees, logs, allHolidays] = await Promise.all([
+      Employees.getAll(),
+      Storage.getLogsByDateRange(startDate, endDate),
+      Storage.getHolidays(),
+    ]);
     if (deptFilter) employees = employees.filter(e => e.dept === deptFilter);
-
-    const logs     = Storage.getLogsByDateRange(startDate, endDate);
-    const holidays = Storage.getHolidays().filter(h =>
-      h.date >= startDate && h.date <= endDate
-    );
+    const holidays = allHolidays.filter(h => h.date >= startDate && h.date <= endDate);
     const attMap   = buildAttMap(employees, logs);
 
     /* 날짜 헤더 */
@@ -296,8 +296,8 @@ tr.mr, tr.er { page-break-inside: avoid; }
      * @param {string|null} [deptFilter]  부서명 (null = 전체)
      * @param {object|null} [ws]          부서 근무 설정
      */
-    print(year, month, companyName = '', deptFilter = null, ws = null) {
-      const html = generateHTML(year, month, companyName, deptFilter, ws);
+    async print(year, month, companyName = '', deptFilter = null, ws = null) {
+      const html = await generateHTML(year, month, companyName, deptFilter, ws);
       const win  = window.open('', '_blank', 'width=1400,height=900');
       if (!win) {
         alert('팝업이 차단되었습니다.\n브라우저 주소창 우측의 팝업 허용 버튼을 클릭한 후 다시 시도하세요.');

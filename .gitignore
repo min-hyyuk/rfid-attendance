@@ -9,3 +9,6 @@ Thumbs.db
 
 # 개발 서버 관련
 node_modules/
+
+# Supabase 연결 설정 — anon key는 공개 안전, Cloudflare Pages 자동 배포를 위해 Git에 포함
+# js/config.js

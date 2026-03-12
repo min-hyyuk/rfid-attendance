@@ -25,7 +25,7 @@
   <!-- 관리자 모드 네비 -->
   <nav id="adminNav" class="app-nav" hidden>
     <a href="#deptmgr" data-sec="deptmgr">&#127970; 부서 관리</a>
-    <a href="#sync"    data-sec="sync">&#9729; 동기화</a>
+    <a href="#status"  data-sec="status">&#9729; DB 연결 상태</a>
   </nav>
 
   <!-- 부서 모드 네비 -->
@@ -74,7 +74,6 @@
       </div>
     </div>
 
-    <!-- 근무 설정은 부서별로 부서 모드에서 관리 -->
     <!-- 연휴/휴무일 (공용) -->
     <div class="card">
       <div class="card-header"><h2>&#128197; 연휴 / 휴무일 관리 (공용)</h2></div>
@@ -102,32 +101,41 @@
 </section>
 
 <!-- ══════════════════════════════════════════════════════════
-     [관리자 모드] 섹션 2 — 동기화
+     [관리자 모드] 섹션 2 — DB 연결 상태
 ═══════════════════════════════════════════════════════════ -->
-<section id="sec-sync" class="section" hidden>
+<section id="sec-status" class="section" hidden>
   <div class="page-body">
 
-    <div style="background:linear-gradient(135deg,#ede9fe,#ddd6fe); border:1px solid #a78bfa;
-                border-radius:var(--radius-lg); padding:18px; display:flex; gap:14px; align-items:center;">
-      <span style="font-size:2rem;">&#128296;</span>
-      <div>
-        <div style="font-weight:700; color:#5b21b6;">개발 예정 기능</div>
-        <div style="font-size:.875rem; color:#7c3aed; margin-top:2px;">Supabase 연동은 7단계 작업에서 구현됩니다.</div>
-      </div>
-    </div>
-
     <div class="card">
-      <div class="card-header"><h2>동기화 현황</h2></div>
+      <div class="card-header"><h2>&#9729; Supabase 연결 상태</h2></div>
       <div class="card-body">
         <div class="sync-stat">
-          <div class="sync-stat-item"><div class="s-val" id="unsyncedCount">-</div><div class="s-key">미동기화 건수</div></div>
-          <div class="sync-stat-item"><div class="s-val" id="totalLogCount">-</div><div class="s-key">전체 기록 수</div></div>
-          <div class="sync-stat-item"><div class="s-val" id="lastSyncTime" style="font-size:1rem;">없음</div><div class="s-key">마지막 동기화</div></div>
+          <div class="sync-stat-item">
+            <div class="s-val" id="dbStatusIcon" style="font-size:1rem;">-</div>
+            <div class="s-key">연결 상태</div>
+          </div>
+          <div class="sync-stat-item">
+            <div class="s-val" id="totalLogCount">-</div>
+            <div class="s-key">전체 기록 수</div>
+          </div>
+          <div class="sync-stat-item">
+            <div class="s-val" id="totalEmpCount">-</div>
+            <div class="s-key">전체 직원 수</div>
+          </div>
+          <div class="sync-stat-item">
+            <div class="s-val" id="lastCheckTime" style="font-size:.875rem;">-</div>
+            <div class="s-key">마지막 확인</div>
+          </div>
         </div>
         <div style="margin-top:16px; display:flex; gap:10px; flex-wrap:wrap;">
-          <button class="btn btn-primary btn-lg" disabled>&#9729; 지금 동기화</button>
+          <button class="btn btn-primary btn-lg" id="checkConnectionBtn">&#9729; 연결 확인</button>
           <button class="btn btn-secondary btn-sm" id="exportJson">JSON 백업</button>
           <button class="btn btn-danger btn-sm" id="clearData">전체 데이터 삭제</button>
+        </div>
+        <div style="margin-top:16px; padding:10px 14px; background:var(--gray-50);
+                    border:1px solid var(--gray-200); border-radius:var(--radius);
+                    font-size:.8125rem; color:var(--gray-500);">
+          연결 대상: <span id="dbUrlDisplay" style="font-family:monospace;"></span>
         </div>
       </div>
     </div>
@@ -370,6 +378,11 @@
 <!-- ══════════════════════════════════════════════════════════
      스크립트
 ═══════════════════════════════════════════════════════════ -->
+<!-- Supabase JS SDK v2 -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<!-- Supabase 연결 설정 (URL + anon key) -->
+<script src="js/config.js"></script>
+<!-- 앱 모듈 -->
 <script src="js/storage.js"></script>
 <script src="js/employees.js"></script>
 <script src="js/attendance.js"></script>
@@ -379,50 +392,22 @@
 'use strict';
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   1. URL 기반 모드 결정
+   1. URL 기반 모드 결정 (동기 — URL 파싱은 즉시 가능)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-const urlParams   = new URLSearchParams(location.search);
-const DEPT_ID     = urlParams.get('dept');  // null = 관리자 모드
+const urlParams    = new URLSearchParams(location.search);
+const DEPT_ID      = urlParams.get('dept');  // null = 관리자 모드
 const IS_DEPT_MODE = !!DEPT_ID;
-let currentDept   = DEPT_ID ? Storage.findDepartmentById(DEPT_ID) : null;
 
-// 잘못된 부서 URL 처리
-if (IS_DEPT_MODE && !currentDept) {
-  document.body.innerHTML = `
-    <div style="display:flex; flex-direction:column; align-items:center; justify-content:center;
-                min-height:100vh; font-family:sans-serif; gap:16px; color:#334155;">
-      <div style="font-size:3rem;">&#9888;</div>
-      <div style="font-size:1.25rem; font-weight:700;">잘못된 부서 URL입니다</div>
-      <div style="color:#64748b;">URL의 dept 파라미터가 존재하지 않는 부서입니다.</div>
-      <a href="index.html" style="color:#2563eb;">관리자 페이지로 이동</a>
-    </div>`;
-  throw new Error('Invalid dept URL');
-}
+// currentDept 는 async 초기화 후 설정됨
+let currentDept   = null;
 
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   2. 모드에 따라 헤더/네비 설정
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 let currentSection  = '';
 let currentAdminTab = 'emp';
 let scanResetTimer  = null;
 let currentLogRows  = [];
 
-if (IS_DEPT_MODE) {
-  document.getElementById('hTitle').textContent = `&#128205; ${currentDept.name}`;
-  document.title = `${currentDept.name} - 출퇴근 관리`;
-  document.getElementById('serialArea').hidden = false;
-  document.getElementById('deptNav').hidden    = false;
-  // dept badge in forms
-  document.getElementById('deptBadge').textContent = currentDept.name;
-  document.getElementById('wsDeptnote').textContent = currentDept.name;
-} else {
-  document.getElementById('hTitle').textContent = '&#127970; 출퇴근 관리 (관리자)';
-  document.title = 'RFID 출퇴근 관리 — 관리자';
-  document.getElementById('adminNav').hidden = false;
-}
-
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   3. 시계
+   2. 시계
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 (function tick() {
   document.getElementById('clock').textContent =
@@ -430,15 +415,10 @@ if (IS_DEPT_MODE) {
   setTimeout(tick, 1000);
 })();
 
-if (IS_DEPT_MODE) {
-  document.getElementById('todayDate').textContent =
-    new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
-}
-
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   4. SPA 네비게이션
+   3. SPA 네비게이션
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-function navigate(sec) {
+async function navigate(sec) {
   document.querySelectorAll('.section').forEach(s => s.hidden = true);
   const target = document.getElementById('sec-' + sec);
   if (target) target.hidden = false;
@@ -449,19 +429,22 @@ function navigate(sec) {
   history.replaceState(null, '', '#' + sec);
   currentSection = sec;
 
-  if (sec === 'attendance') renderRightPanel();
-  if (sec === 'admin')      { renderEmpTable(); refreshEmpSelect(); loadWorkSettings(); }
-  if (sec === 'sync')       updateSyncStat();
-  if (sec === 'deptmgr')    { renderDeptTable(); renderHolidayTable(); }
+  if (sec === 'attendance') await renderRightPanel();
+  if (sec === 'admin')      await Promise.all([renderEmpTable(), refreshEmpSelect(), loadWorkSettings()]);
+  if (sec === 'status')     await updateConnectionStatus();
+  if (sec === 'deptmgr')    await Promise.all([renderDeptTable(), renderHolidayTable()]);
 }
 
-// 네비 클릭 이벤트 (관리자 + 부서 양쪽)
+// 네비 클릭 이벤트
 document.querySelectorAll('.app-nav a').forEach(a => {
-  a.addEventListener('click', e => { e.preventDefault(); navigate(a.dataset.sec); });
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    navigate(a.dataset.sec).catch(err => console.error(err));
+  });
 });
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   5. Serial 연결 (부서 모드 전용)
+   4. Serial 연결 (부서 모드 전용)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 if (IS_DEPT_MODE) {
   SerialReader.setOnStatus((status, msg) => {
@@ -481,7 +464,7 @@ if (IS_DEPT_MODE) {
 
   SerialReader.setOnCard((cardId) => {
     if (currentSection === 'attendance') {
-      handleCardScan(cardId);
+      handleCardScan(cardId).catch(err => console.error(err));
     } else if (currentSection === 'admin' && currentAdminTab === 'emp') {
       const input = document.getElementById('fCardId');
       input.value = cardId;
@@ -497,10 +480,10 @@ if (IS_DEPT_MODE) {
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   6. 카드 스캔 처리 (부서 모드)
+   5. 카드 스캔 처리 (부서 모드)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-function handleCardScan(cardId) {
-  const emp = Employees.findByCardId(cardId);
+async function handleCardScan(cardId) {
+  const emp = await Employees.findByCardId(cardId);
 
   // 타 부서 직원 → 로그 저장 없이 안내만
   if (emp && emp.dept !== currentDept.name) {
@@ -508,22 +491,24 @@ function handleCardScan(cardId) {
     return;
   }
 
-  const ws     = Storage.getDeptWorkSettings(currentDept.id);
-  const result = Attendance.processTag(cardId, ws);
+  const ws     = await Storage.getDeptWorkSettings(currentDept.id);
+  const result = await Attendance.processTag(cardId, ws);
   showScanResult(result);
-  renderRightPanel(result.success ? result.employee?.id : null);
+  await renderRightPanel(result.success ? result.employee?.id : null);
 }
 
-/** 수동 출퇴근 등록 (카드 미소지 시) */
-function manualRegister(cardId) {
-  const ws     = Storage.getDeptWorkSettings(currentDept.id);
-  const result = Attendance.processTag(cardId, ws);
-  showScanResult(result);
-  renderRightPanel(result.success ? result.employee?.id : null);
+/** 수동 출퇴근 등록 (카드 미소지 시) — 전역 함수 (onclick에서 호출) */
+async function manualRegister(cardId) {
+  try {
+    const ws     = await Storage.getDeptWorkSettings(currentDept.id);
+    const result = await Attendance.processTag(cardId, ws);
+    showScanResult(result);
+    await renderRightPanel(result.success ? result.employee?.id : null);
+  } catch (e) { console.error(e); }
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   7. 스캔 패널
+   6. 스캔 패널
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 function showScanResult(result) {
   const panel = document.getElementById('scanPanel');
@@ -587,13 +572,18 @@ function showScanResult(result) {
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   8. 직원 현황 패널 (부서 모드)
+   7. 직원 현황 패널 (부서 모드)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-function renderRightPanel(flashEmpId = null) {
+async function renderRightPanel(flashEmpId = null) {
   if (!IS_DEPT_MODE) return;
-  const ws       = Storage.getDeptWorkSettings(currentDept.id);
-  const statuses = Attendance.getTodayStatus(currentDept.name, ws);
-  const summary  = Attendance.getTodaySummary(currentDept.name, ws);
+  const ws       = await Storage.getDeptWorkSettings(currentDept.id);
+  const statuses = await Attendance.getTodayStatus(currentDept.name, ws);
+  const summary  = {
+    total:   statuses.length,
+    present: statuses.filter(s => s.status === 'present').length,
+    left:    statuses.filter(s => s.status === 'left').length,
+    absent:  statuses.filter(s => s.status === 'absent').length,
+  };
 
   document.getElementById('epTotal').textContent = `총 ${summary.total}명`;
   document.getElementById('epStats').innerHTML = `
@@ -613,8 +603,8 @@ function renderRightPanel(flashEmpId = null) {
 
   listEl.innerHTML = statuses.map(s => {
     const icon     = { present: '&#9679;', left: '&#9679;', absent: '&#9675;' };
-    const lateTag  = s.lateMin > 0      ? `<span class="ei-badge late">지각</span>` : '';
-    const earlyTag = s.earlyLeaveMin > 0 ? `<span class="ei-badge early">조퇴</span>` : '';
+    const lateTag  = s.lateMin > 0       ? `<span class="ei-badge late">지각</span>` : '';
+    const earlyTag = s.earlyLeaveMin > 0  ? `<span class="ei-badge early">조퇴</span>` : '';
     return `
     <div class="emp-item ${s.status}" id="ei-${s.employee.id}">
       <div class="ei-dot ${s.status}">${icon[s.status]}</div>
@@ -644,7 +634,7 @@ function renderRightPanel(flashEmpId = null) {
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   9. 탭 전환
+   8. 탭 전환
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -657,11 +647,11 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   10. 직원 등록 탭 (부서 모드)
+   9. 직원 등록 탭 (부서 모드)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-function renderEmpTable() {
+async function renderEmpTable() {
   if (!IS_DEPT_MODE) return;
-  const list = Employees.getAll().filter(e => e.dept === currentDept.name);
+  const list = (await Employees.getAll()).filter(e => e.dept === currentDept.name);
   document.getElementById('empCount').textContent = `총 ${list.length}명`;
   const wrap = document.getElementById('empTableWrap');
 
@@ -700,7 +690,7 @@ function renderEmpTable() {
 }
 
 if (IS_DEPT_MODE) {
-  document.getElementById('addEmpBtn').addEventListener('click', () => {
+  document.getElementById('addEmpBtn').addEventListener('click', async () => {
     const cardId    = document.getElementById('fCardId').value.trim();
     const name      = document.getElementById('fName').value.trim();
     const hireDate  = document.getElementById('fHireDate').value;
@@ -711,30 +701,30 @@ if (IS_DEPT_MODE) {
     if (!cardId) return showAlert(alertEl, '카드 ID를 입력하세요.', 'danger');
 
     try {
-      Employees.add(name, cardId, currentDept.name, hireDate, leaveDate);
+      await Employees.add(name, cardId, currentDept.name, hireDate, leaveDate);
       document.getElementById('fCardId').value    = '';
       document.getElementById('fName').value      = '';
       document.getElementById('fHireDate').value  = '';
       document.getElementById('fLeaveDate').value = '';
       showAlert(alertEl, `${name}님이 등록되었습니다.`, 'success');
-      renderEmpTable();
-      refreshEmpSelect();
+      await renderEmpTable();
+      await refreshEmpSelect();
     } catch (e) { showAlert(alertEl, e.message, 'danger'); }
   });
 }
 
-function deleteEmp(id, name) {
+async function deleteEmp(id, name) {
   if (!confirm(`"${name}"을(를) 삭제하시겠습니까?\n출퇴근 기록은 유지됩니다.`)) return;
-  Employees.delete(id);
-  renderEmpTable();
-  refreshEmpSelect();
+  await Employees.delete(id);
+  await renderEmpTable();
+  await refreshEmpSelect();
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   11. 수정 모달
+   10. 수정 모달
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-function openEditModal(id) {
-  const emp = Employees.findById(id);
+async function openEditModal(id) {
+  const emp = await Employees.findById(id);
   if (!emp) return;
   document.getElementById('editId').value        = emp.id;
   document.getElementById('editCardId').value    = emp.card_id;
@@ -752,7 +742,7 @@ document.getElementById('editModal').addEventListener('click', e => {
   if (e.target === document.getElementById('editModal'))
     document.getElementById('editModal').hidden = true;
 });
-document.getElementById('editSaveBtn').addEventListener('click', () => {
+document.getElementById('editSaveBtn').addEventListener('click', async () => {
   const id        = document.getElementById('editId').value;
   const cardId    = document.getElementById('editCardId').value.trim();
   const name      = document.getElementById('editName').value.trim();
@@ -764,14 +754,14 @@ document.getElementById('editSaveBtn').addEventListener('click', () => {
   if (!cardId) return showAlert(alertEl, '카드 ID를 입력하세요.', 'danger');
 
   try {
-    Employees.update(id, { card_id: cardId, name, hire_date: hireDate || null, leave_date: leaveDate || null });
+    await Employees.update(id, { card_id: cardId, name, hire_date: hireDate || null, leave_date: leaveDate || null });
     document.getElementById('editModal').hidden = true;
-    renderEmpTable();
+    await renderEmpTable();
   } catch (e) { showAlert(alertEl, e.message, 'danger'); }
 });
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   12. 기록 조회 탭
+   11. 기록 조회 탭
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 function setDefaultDates() {
   const today = new Date().toISOString().slice(0, 10);
@@ -781,32 +771,34 @@ function setDefaultDates() {
   if (endEl)   endEl.value   = today;
 }
 
-function refreshEmpSelect() {
+async function refreshEmpSelect() {
   const sel = document.getElementById('fEmployee');
   if (!sel) return;
   const cur  = sel.value;
   const list = IS_DEPT_MODE
-    ? Employees.getAll().filter(e => e.dept === currentDept.name)
-    : Employees.getAll();
+    ? (await Employees.getAll()).filter(e => e.dept === currentDept.name)
+    : await Employees.getAll();
   sel.innerHTML = '<option value="">전체</option>' +
     list.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
   sel.value = cur;
 }
 
-document.getElementById('queryBtn').addEventListener('click', () => {
+document.getElementById('queryBtn').addEventListener('click', async () => {
   const start = document.getElementById('fStartDate').value;
   const end   = document.getElementById('fEndDate').value;
   const empId = document.getElementById('fEmployee').value || null;
 
-  if (!start || !end)  return alert('조회 기간을 입력하세요.');
-  if (start > end)     return alert('시작일이 종료일보다 늦을 수 없습니다.');
+  if (!start || !end) return alert('조회 기간을 입력하세요.');
+  if (start > end)    return alert('시작일이 종료일보다 늦을 수 없습니다.');
 
-  const ws = IS_DEPT_MODE ? Storage.getDeptWorkSettings(currentDept.id) : null;
-  currentLogRows = Attendance.queryLogs(start, end, empId, ws);
+  const ws = IS_DEPT_MODE ? await Storage.getDeptWorkSettings(currentDept.id) : null;
+  currentLogRows = await Attendance.queryLogs(start, end, empId, ws);
 
   // 부서 필터 (기록 조회도 현재 부서만)
   if (IS_DEPT_MODE) {
-    const deptEmps = new Set(Employees.getAll().filter(e => e.dept === currentDept.name).map(e => e.id));
+    const deptEmps = new Set(
+      (await Employees.getAll()).filter(e => e.dept === currentDept.name).map(e => e.id)
+    );
     currentLogRows = currentLogRows.filter(r => deptEmps.has(r.emp_id));
   }
 
@@ -861,7 +853,7 @@ document.getElementById('csvBtn').addEventListener('click', () => {
 });
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   13. 월 출근부 탭 (부서 모드)
+   12. 월 출근부 탭 (부서 모드)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 function initReportTab() {
   const now = new Date();
@@ -871,7 +863,7 @@ function initReportTab() {
   if (monthEl) monthEl.value = now.getMonth() + 1;
 }
 
-document.getElementById('printReportBtn').addEventListener('click', () => {
+document.getElementById('printReportBtn').addEventListener('click', async () => {
   const year    = parseInt(document.getElementById('rYear').value, 10);
   const month   = parseInt(document.getElementById('rMonth').value, 10);
   const company = document.getElementById('rCompany').value.trim();
@@ -879,24 +871,24 @@ document.getElementById('printReportBtn').addEventListener('click', () => {
   if (!year || !month) { alert('연도와 월을 입력하세요.'); return; }
 
   const deptFilter = IS_DEPT_MODE ? currentDept.name : null;
-  const ws         = IS_DEPT_MODE ? Storage.getDeptWorkSettings(currentDept.id) : null;
+  const ws         = IS_DEPT_MODE ? await Storage.getDeptWorkSettings(currentDept.id) : null;
   const empList    = deptFilter
-    ? Employees.getAll().filter(e => e.dept === deptFilter)
-    : Employees.getAll();
+    ? (await Employees.getAll()).filter(e => e.dept === deptFilter)
+    : await Employees.getAll();
 
   if (empList.length === 0) {
     alert('출력할 직원이 없습니다.\n직원을 먼저 등록해 주세요.');
     return;
   }
-  Report.print(year, month, company, deptFilter, ws);
+  await Report.print(year, month, company, deptFilter, ws);
 });
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   14. 근무 설정 탭 (부서 모드)
+   13. 근무 설정 탭 (부서 모드)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-function loadWorkSettings() {
+async function loadWorkSettings() {
   if (!IS_DEPT_MODE) return;
-  const ws = Storage.getDeptWorkSettings(currentDept.id);
+  const ws = await Storage.getDeptWorkSettings(currentDept.id);
   document.getElementById('wsStart').value    = ws.start;
   document.getElementById('wsEnd').value      = ws.end;
   document.getElementById('wsLateMin').value  = ws.late_min;
@@ -906,7 +898,7 @@ function loadWorkSettings() {
   });
 }
 
-document.getElementById('saveWorkSettingsBtn').addEventListener('click', () => {
+document.getElementById('saveWorkSettingsBtn').addEventListener('click', async () => {
   if (!IS_DEPT_MODE) return;
   const ws = {
     start:     document.getElementById('wsStart').value    || '09:00',
@@ -915,7 +907,7 @@ document.getElementById('saveWorkSettingsBtn').addEventListener('click', () => {
     early_min: parseInt(document.getElementById('wsEarlyMin').value) || 0,
     work_days: [...document.querySelectorAll('.wd-check:checked')].map(cb => parseInt(cb.value, 10)),
   };
-  Storage.saveDeptWorkSettings(currentDept.id, ws);
+  await Storage.saveDeptWorkSettings(currentDept.id, ws);
   const msgEl = document.getElementById('wsAlert');
   msgEl.textContent = '✓ 저장되었습니다.';
   msgEl.style.color = 'var(--success)';
@@ -923,10 +915,13 @@ document.getElementById('saveWorkSettingsBtn').addEventListener('click', () => {
 });
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   15. 부서 관리 탭 (관리자 모드)
+   14. 부서 관리 탭 (관리자 모드)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-function renderDeptTable() {
-  const list  = Storage.getDepartments();
+async function renderDeptTable() {
+  const [list, allEmps] = await Promise.all([
+    Storage.getDepartments(),
+    Employees.getAll(),
+  ]);
   const wrap  = document.getElementById('deptTableWrap');
   const count = document.getElementById('deptCount');
   if (!wrap) return;
@@ -946,7 +941,7 @@ function renderDeptTable() {
         </thead>
         <tbody>
           ${list.map(d => {
-            const empCnt = Employees.getAll().filter(e => e.dept === d.name).length;
+            const empCnt = allEmps.filter(e => e.dept === d.name).length;
             const ws     = d.work_settings || {};
             const wsNote = ws.start ? `${ws.start}~${ws.end}` : '기본';
             const url    = `${location.origin}${location.pathname}?dept=${d.id}`;
@@ -981,34 +976,35 @@ function copyDeptUrl(deptId) {
 }
 
 if (!IS_DEPT_MODE) {
-  document.getElementById('addDeptBtn').addEventListener('click', () => {
+  document.getElementById('addDeptBtn').addEventListener('click', async () => {
     const name    = document.getElementById('deptName').value.trim();
     const alertEl = document.getElementById('deptFormAlert');
     if (!name) return showAlert(alertEl, '부서명을 입력하세요.', 'danger');
     try {
-      Storage.addDepartment(name);
+      await Storage.addDepartment(name);
       document.getElementById('deptName').value = '';
       showAlert(alertEl, `"${name}" 부서가 생성되었습니다.`, 'success');
-      renderDeptTable();
+      await renderDeptTable();
     } catch (e) { showAlert(alertEl, e.message, 'danger'); }
   });
 }
 
-function deleteDept(id, name) {
-  const empCnt = Employees.getAll().filter(e => e.dept === name).length;
+async function deleteDept(id, name) {
+  const allEmps = await Employees.getAll();
+  const empCnt  = allEmps.filter(e => e.dept === name).length;
   const msg = empCnt > 0
     ? `"${name}"에 직원 ${empCnt}명이 있습니다. 삭제하시겠습니까?\n직원·출퇴근 데이터는 유지됩니다.`
     : `"${name}" 부서를 삭제하시겠습니까?`;
   if (!confirm(msg)) return;
-  Storage.removeDepartment(id);
-  renderDeptTable();
+  await Storage.removeDepartment(id);
+  await renderDeptTable();
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   16. 연휴/휴무일 (관리자 모드)
+   15. 연휴/휴무일 (관리자 모드)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-function renderHolidayTable() {
-  const list = Storage.getHolidays();
+async function renderHolidayTable() {
+  const list = await Storage.getHolidays();
   const wrap = document.getElementById('holTableWrap');
   if (!wrap) return;
   if (list.length === 0) {
@@ -1032,40 +1028,63 @@ function renderHolidayTable() {
 }
 
 if (!IS_DEPT_MODE) {
-  document.getElementById('addHolBtn').addEventListener('click', () => {
+  document.getElementById('addHolBtn').addEventListener('click', async () => {
     const date = document.getElementById('holDate').value;
     const name = document.getElementById('holName').value.trim();
     if (!date) { alert('날짜를 입력하세요.'); return; }
-    Storage.addHoliday(date, name);
+    await Storage.addHoliday(date, name);
     document.getElementById('holDate').value = '';
     document.getElementById('holName').value = '';
-    renderHolidayTable();
+    await renderHolidayTable();
   });
 }
 
-function removeHoliday(date) {
-  Storage.removeHoliday(date);
-  renderHolidayTable();
+async function removeHoliday(date) {
+  await Storage.removeHoliday(date);
+  await renderHolidayTable();
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   17. 동기화 섹션 (관리자 모드)
+   16. DB 연결 상태 섹션 (관리자 모드)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-function updateSyncStat() {
-  const logs     = Storage.getAttendanceLogs();
-  const lastSync = Storage.getSetting('last_sync_at');
-  document.getElementById('unsyncedCount').textContent = logs.filter(l => !l.synced).length;
-  document.getElementById('totalLogCount').textContent = logs.length;
-  document.getElementById('lastSyncTime').textContent  =
-    lastSync ? new Date(lastSync).toLocaleString('ko-KR') : '없음';
+async function updateConnectionStatus() {
+  const iconEl      = document.getElementById('dbStatusIcon');
+  const logCountEl  = document.getElementById('totalLogCount');
+  const empCountEl  = document.getElementById('totalEmpCount');
+  const lastCheckEl = document.getElementById('lastCheckTime');
+  const urlEl       = document.getElementById('dbUrlDisplay');
+
+  if (urlEl) urlEl.textContent = SupabaseConfig.url;
+
+  try {
+    const [connected, logs, emps] = await Promise.all([
+      Storage.checkConnection(),
+      Storage.getAttendanceLogs(),
+      Storage.getEmployees(),
+    ]);
+    iconEl.textContent = connected ? '연결됨' : '오류';
+    iconEl.style.color = connected ? 'var(--success)' : 'var(--danger)';
+    logCountEl.textContent = logs.length;
+    empCountEl.textContent = emps.length;
+  } catch (e) {
+    if (iconEl) { iconEl.textContent = '오류'; iconEl.style.color = 'var(--danger)'; }
+  }
+  if (lastCheckEl) lastCheckEl.textContent = new Date().toLocaleString('ko-KR');
 }
 
-document.getElementById('exportJson').addEventListener('click', () => {
+document.getElementById('checkConnectionBtn').addEventListener('click', () => {
+  updateConnectionStatus().catch(err => console.error(err));
+});
+
+document.getElementById('exportJson').addEventListener('click', async () => {
+  const [departments, employees, attendance_logs] = await Promise.all([
+    Storage.getDepartments(),
+    Storage.getEmployees(),
+    Storage.getAttendanceLogs(),
+  ]);
   const data = {
     exported_at: new Date().toISOString(),
-    departments: Storage.getDepartments(),
-    employees:   Storage.getEmployees(),
-    attendance_logs: Storage.getAttendanceLogs(),
+    departments, employees, attendance_logs,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
@@ -1076,16 +1095,16 @@ document.getElementById('exportJson').addEventListener('click', () => {
   URL.revokeObjectURL(url);
 });
 
-document.getElementById('clearData').addEventListener('click', () => {
+document.getElementById('clearData').addEventListener('click', async () => {
   if (!confirm('모든 데이터(부서·직원·출퇴근 기록)가 삭제됩니다. 계속하시겠습니까?')) return;
   if (!confirm('최종 확인: 삭제된 데이터는 복구할 수 없습니다.')) return;
-  Storage.clearAll();
-  updateSyncStat();
+  await Storage.clearAll();
+  await updateConnectionStatus();
   alert('데이터가 삭제되었습니다.');
 });
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   18. 유틸
+   17. 유틸
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 function showAlert(el, msg, type) {
   if (!el) return;
@@ -1094,17 +1113,62 @@ function showAlert(el, msg, type) {
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   19. 초기화
+   18. 비동기 초기화
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-setDefaultDates();
-initReportTab();
+(async () => {
+  // 부서 모드: Supabase에서 부서 정보 로드
+  if (DEPT_ID) {
+    currentDept = await Storage.findDepartmentById(DEPT_ID);
+    if (!currentDept) {
+      document.body.innerHTML = `
+        <div style="display:flex; flex-direction:column; align-items:center; justify-content:center;
+                    min-height:100vh; font-family:sans-serif; gap:16px; color:#334155;">
+          <div style="font-size:3rem;">&#9888;</div>
+          <div style="font-size:1.25rem; font-weight:700;">잘못된 부서 URL입니다</div>
+          <div style="color:#64748b;">URL의 dept 파라미터가 존재하지 않는 부서입니다.</div>
+          <a href="index.html" style="color:#2563eb;">관리자 페이지로 이동</a>
+        </div>`;
+      return;
+    }
+  }
 
-if (IS_DEPT_MODE) {
-  const initSec = location.hash.slice(1) || 'attendance';
-  navigate(initSec);
-} else {
-  navigate('deptmgr');
-}
+  // UI 모드 설정
+  if (IS_DEPT_MODE) {
+    document.getElementById('hTitle').textContent = `&#128205; ${currentDept.name}`;
+    document.title = `${currentDept.name} - 출퇴근 관리`;
+    document.getElementById('serialArea').hidden = false;
+    document.getElementById('deptNav').hidden    = false;
+    document.getElementById('deptBadge').textContent  = currentDept.name;
+    document.getElementById('wsDeptnote').textContent = currentDept.name;
+
+    if (IS_DEPT_MODE) {
+      document.getElementById('todayDate').textContent =
+        new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
+    }
+  } else {
+    document.getElementById('hTitle').textContent = '&#127970; 출퇴근 관리 (관리자)';
+    document.title = 'RFID 출퇴근 관리 — 관리자';
+    document.getElementById('adminNav').hidden = false;
+  }
+
+  setDefaultDates();
+  initReportTab();
+
+  if (IS_DEPT_MODE) {
+    const initSec = location.hash.slice(1) || 'attendance';
+    await navigate(initSec);
+  } else {
+    await navigate('deptmgr');
+  }
+})().catch(err => {
+  console.error('초기화 실패:', err);
+  document.body.innerHTML += `
+    <div style="position:fixed; top:0; left:0; right:0; background:#fee2e2; border-bottom:2px solid #ef4444;
+                padding:12px 20px; font-family:sans-serif; font-size:.9rem; color:#991b1b; z-index:9999;">
+      <b>DB 연결 오류:</b> ${err.message}<br>
+      <small>js/config.js의 Supabase URL과 anon key를 확인하고 새로고침하세요.</small>
+    </div>`;
+});
 </script>
 </body>
 </html>

@@ -1,173 +1,242 @@
 /**
- * storage.js - LocalStorage 저장/읽기 모듈
- * 키 prefix: rfid_
+ * storage.js - Supabase CRUD 모듈 (LocalStorage 완전 대체)
+ *
+ * 의존: Supabase JS SDK v2 CDN (window.supabase)
+ *       config.js (SupabaseConfig 전역 객체)
+ *
+ * 모든 public 메서드 async / Promise 반환
  */
 const Storage = (() => {
-  const KEYS = {
-    employees:      'rfid_employees',
-    attendanceLogs: 'rfid_attendance_logs',
-    settings:       'rfid_settings',
-    holidays:       'rfid_holidays',
-    departments:    'rfid_departments',
-  };
+  const _db = window.supabase.createClient(SupabaseConfig.url, SupabaseConfig.anonKey);
 
   const DEFAULT_WS = {
     start:     '09:00',
     end:       '18:00',
     late_min:  0,
     early_min: 0,
-    work_days: [1, 2, 3, 4, 5],  // JS getDay() 기준: 0=일, 1=월 … 6=토
+    work_days: [1, 2, 3, 4, 5],
   };
 
-  function get(key) {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
-  }
-
-  function set(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
+  /** Supabase 응답에서 data를 추출, error 시 throw */
+  function _unwrap({ data, error }, fallback = null) {
+    if (error) throw new Error(error.message);
+    return data ?? fallback;
   }
 
   return {
+
     // ── 직원 ──────────────────────────────────────────
-    getEmployees() {
-      return get(KEYS.employees) || [];
+
+    async getEmployees() {
+      return _unwrap(
+        await _db.from('employees').select('*').order('id'),
+        []
+      );
     },
-    saveEmployees(list) {
-      set(KEYS.employees, list);
+
+    /** list 배열을 upsert (id 기준) */
+    async saveEmployees(list) {
+      if (!list || list.length === 0) return;
+      return _unwrap(
+        await _db.from('employees').upsert(list, { onConflict: 'id' })
+      );
     },
-    findEmployeeByCardId(cardId) {
-      return this.getEmployees().find(e => e.card_id === cardId) || null;
+
+    async findEmployeeByCardId(cardId) {
+      const { data, error } = await _db
+        .from('employees').select('*').eq('card_id', cardId).maybeSingle();
+      if (error) throw new Error(error.message);
+      return data;
     },
-    findEmployeeById(id) {
-      return this.getEmployees().find(e => e.id === id) || null;
+
+    async findEmployeeById(id) {
+      const { data, error } = await _db
+        .from('employees').select('*').eq('id', id).maybeSingle();
+      if (error) throw new Error(error.message);
+      return data;
     },
 
     // ── 출퇴근 기록 ───────────────────────────────────
-    getAttendanceLogs() {
-      return get(KEYS.attendanceLogs) || [];
+
+    async getAttendanceLogs() {
+      return _unwrap(
+        await _db.from('attendance_logs').select('*').order('timestamp'),
+        []
+      );
     },
-    saveAttendanceLogs(logs) {
-      set(KEYS.attendanceLogs, logs);
+
+    /** 단건 INSERT — Supabase에 직접 기록이므로 synced = true 고정 */
+    async addAttendanceLog(log) {
+      const { data, error } = await _db
+        .from('attendance_logs')
+        .insert({ ...log, synced: true })
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      return data;
     },
-    addAttendanceLog(log) {
-      const logs = this.getAttendanceLogs();
-      logs.push(log);
-      this.saveAttendanceLogs(logs);
-      return log;
+
+    /** dateStr: 'YYYY-MM-DD' — UTC 기준 해당 날짜 전체 */
+    async getLogsByDate(dateStr) {
+      const start = dateStr + 'T00:00:00.000Z';
+      const end   = dateStr + 'T23:59:59.999Z';
+      return _unwrap(
+        await _db.from('attendance_logs').select('*')
+          .gte('timestamp', start).lte('timestamp', end).order('timestamp'),
+        []
+      );
     },
-    getLogsByDate(dateStr) {
-      return this.getAttendanceLogs().filter(l => l.timestamp.startsWith(dateStr));
+
+    async getLogsByDateRange(startDate, endDate) {
+      const start = startDate + 'T00:00:00.000Z';
+      const end   = endDate   + 'T23:59:59.999Z';
+      return _unwrap(
+        await _db.from('attendance_logs').select('*')
+          .gte('timestamp', start).lte('timestamp', end).order('timestamp'),
+        []
+      );
     },
-    getLogsByDateRange(startDate, endDate) {
-      return this.getAttendanceLogs().filter(l => {
-        const d = l.timestamp.slice(0, 10);
-        return d >= startDate && d <= endDate;
-      });
-    },
-    getUnsyncedLogs() {
-      return this.getAttendanceLogs().filter(l => !l.synced);
-    },
-    markAsSynced(logIds) {
-      const logs = this.getAttendanceLogs();
-      const idSet = new Set(logIds);
-      logs.forEach(l => { if (idSet.has(l.log_id)) l.synced = true; });
-      this.saveAttendanceLogs(logs);
+
+    async getUnsyncedLogs() {
+      return _unwrap(
+        await _db.from('attendance_logs').select('*').eq('synced', false),
+        []
+      );
     },
 
     // ── 일반 설정 ──────────────────────────────────────
-    getSettings() {
-      return get(KEYS.settings) || {};
+
+    async getSettings() {
+      const rows = _unwrap(await _db.from('settings').select('*'), []);
+      return Object.fromEntries(rows.map(r => [r.key, r.value]));
     },
-    getSetting(key, defaultVal = null) {
-      return this.getSettings()[key] ?? defaultVal;
+
+    async getSetting(key, defaultVal = null) {
+      const { data, error } = await _db
+        .from('settings').select('value').eq('key', key).maybeSingle();
+      if (error) throw new Error(error.message);
+      return data ? data.value : defaultVal;
     },
-    setSetting(key, value) {
-      const s = this.getSettings();
-      s[key] = value;
-      set(KEYS.settings, s);
+
+    async setSetting(key, value) {
+      return _unwrap(
+        await _db.from('settings')
+          .upsert({ key, value: String(value) }, { onConflict: 'key' })
+      );
     },
 
     // ── 부서 관리 ──────────────────────────────────────
-    /**
-     * 부서 목록 반환
-     * 부서 객체: { id, name, work_settings: {...}, created_at }
-     */
-    getDepartments() {
-      return get(KEYS.departments) || [];
+
+    async getDepartments() {
+      return _unwrap(
+        await _db.from('departments').select('*').order('id'),
+        []
+      );
     },
-    saveDepartments(list) {
-      set(KEYS.departments, list);
+
+    async findDepartmentById(id) {
+      const { data, error } = await _db
+        .from('departments').select('*').eq('id', id).maybeSingle();
+      if (error) throw new Error(error.message);
+      return data;
     },
-    findDepartmentById(id) {
-      return this.getDepartments().find(d => d.id === id) || null;
+
+    async findDepartmentByName(name) {
+      const { data, error } = await _db
+        .from('departments').select('*').eq('name', name).maybeSingle();
+      if (error) throw new Error(error.message);
+      return data;
     },
-    findDepartmentByName(name) {
-      return this.getDepartments().find(d => d.name === name) || null;
-    },
-    /** 부서 추가 — 기본 근무 설정 포함 */
-    addDepartment(name) {
-      const list = this.getDepartments();
+
+    async addDepartment(name) {
       const trimmed = name.trim();
       if (!trimmed) throw new Error('부서명을 입력하세요.');
-      if (list.some(d => d.name === trimmed)) throw new Error('이미 존재하는 부서입니다.');
-      const nums = list.map(d => parseInt(d.id.replace('DEPT', ''), 10)).filter(n => !isNaN(n));
+      const dup = await this.findDepartmentByName(trimmed);
+      if (dup) throw new Error('이미 존재하는 부서입니다.');
+
+      const list = await this.getDepartments();
+      const nums = list
+        .map(d => parseInt(d.id.replace('DEPT', ''), 10))
+        .filter(n => !isNaN(n));
       const max  = nums.length > 0 ? Math.max(...nums) : 0;
+
       const dept = {
         id:            `DEPT${String(max + 1).padStart(3, '0')}`,
         name:          trimmed,
         work_settings: { ...DEFAULT_WS },
         created_at:    new Date().toISOString(),
       };
-      list.push(dept);
-      this.saveDepartments(list);
+      _unwrap(await _db.from('departments').insert(dept));
       return dept;
     },
-    removeDepartment(id) {
-      this.saveDepartments(this.getDepartments().filter(d => d.id !== id));
+
+    async removeDepartment(id) {
+      return _unwrap(await _db.from('departments').delete().eq('id', id));
     },
 
     // ── 부서별 근무 설정 ────────────────────────────────
-    /** 해당 부서의 근무 설정 반환 (없으면 기본값) */
-    getDeptWorkSettings(deptId) {
-      const dept = this.findDepartmentById(deptId);
-      return dept?.work_settings ? { ...DEFAULT_WS, ...dept.work_settings } : { ...DEFAULT_WS };
-    },
-    /** 해당 부서의 근무 설정 저장 */
-    saveDeptWorkSettings(deptId, settings) {
-      const list = this.getDepartments();
-      const idx  = list.findIndex(d => d.id === deptId);
-      if (idx === -1) return;
-      list[idx].work_settings = settings;
-      this.saveDepartments(list);
+
+    async getDeptWorkSettings(deptId) {
+      const dept = await this.findDepartmentById(deptId);
+      return dept?.work_settings
+        ? { ...DEFAULT_WS, ...dept.work_settings }
+        : { ...DEFAULT_WS };
     },
 
-    // ── 연휴 / 휴무일 (공용) ────────────────────────────
-    getHolidays() {
-      return get(KEYS.holidays) || [];
-    },
-    saveHolidays(list) {
-      set(KEYS.holidays, list);
-    },
-    addHoliday(date, name = '') {
-      const list = this.getHolidays();
-      if (list.some(h => h.date === date)) return;
-      list.push({ date, name });
-      list.sort((a, b) => a.date.localeCompare(b.date));
-      this.saveHolidays(list);
-    },
-    removeHoliday(date) {
-      this.saveHolidays(this.getHolidays().filter(h => h.date !== date));
-    },
-    isHoliday(dateStr) {
-      return this.getHolidays().some(h => h.date === dateStr);
+    async saveDeptWorkSettings(deptId, settings) {
+      return _unwrap(
+        await _db.from('departments')
+          .update({ work_settings: settings }).eq('id', deptId)
+      );
     },
 
-    // ── 개발/관리 ─────────────────────────────────────
-    clearAll() {
-      Object.values(KEYS).forEach(k => localStorage.removeItem(k));
+    // ── 연휴 / 휴무일 ────────────────────────────────────
+
+    async getHolidays() {
+      return _unwrap(
+        await _db.from('holidays').select('*').order('date'),
+        []
+      );
     },
+
+    async addHoliday(date, name = '') {
+      const { data: existing } = await _db
+        .from('holidays').select('date').eq('date', date).maybeSingle();
+      if (existing) return;
+      return _unwrap(await _db.from('holidays').insert({ date, name }));
+    },
+
+    async removeHoliday(date) {
+      return _unwrap(await _db.from('holidays').delete().eq('date', date));
+    },
+
+    async isHoliday(dateStr) {
+      const { data } = await _db
+        .from('holidays').select('date').eq('date', dateStr).maybeSingle();
+      return !!data;
+    },
+
+    // ── 개발 / 관리 ───────────────────────────────────────
+
+    async clearAll() {
+      await Promise.all([
+        _db.from('attendance_logs').delete().neq('log_id', ''),
+        _db.from('employees').delete().neq('id', ''),
+        _db.from('departments').delete().neq('id', ''),
+        _db.from('holidays').delete().neq('date', ''),
+        _db.from('settings').delete().neq('key', ''),
+      ]);
+    },
+
+    /** Supabase 연결 확인 (ping) */
+    async checkConnection() {
+      try {
+        const { error } = await _db.from('settings').select('key').limit(1);
+        return !error;
+      } catch { return false; }
+    },
+
+    /** Supabase 클라이언트 직접 접근 */
+    get client() { return _db; },
   };
 })();

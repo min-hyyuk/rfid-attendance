@@ -1,5 +1,5 @@
 /**
- * attendance.js - 출퇴근 판별 로직
+ * attendance.js - 출퇴근 판별 로직 (async)
  *
  * 판별 규칙:
  *   오늘 출근 기록 없음          → ✅ 출근 처리
@@ -18,11 +18,11 @@ const Attendance = (() => {
     work_days: [1, 2, 3, 4, 5],
   };
 
-  function generateLogId() {
-    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const todayLogs = Storage.getAttendanceLogs()
-      .filter(l => l.log_id.startsWith('LOG' + dateStr));
-    return `LOG${dateStr}${String(todayLogs.length + 1).padStart(3, '0')}`;
+  async function generateLogId() {
+    const dateStr   = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const todayLogs = await Storage.getLogsByDate(new Date().toISOString().slice(0, 10));
+    const count     = todayLogs.filter(l => l.log_id.startsWith('LOG' + dateStr)).length;
+    return `LOG${dateStr}${String(count + 1).padStart(3, '0')}`;
   }
 
   function todayStr() {
@@ -60,16 +60,16 @@ const Attendance = (() => {
      * @param {string} cardId
      * @param {object} [ws]  부서 근무 설정 (미전달 시 기본값 사용)
      */
-    processTag(cardId, ws = null) {
+    async processTag(cardId, ws = null) {
       const effectiveWs = ws || DEFAULT_WS;
-      const employee    = Employees.findByCardId(cardId);
+      const employee    = await Employees.findByCardId(cardId);
 
       if (!employee) {
         return { success: false, type: 'unknown', cardId, message: `미등록 카드: ${cardId}` };
       }
 
       const today    = todayStr();
-      const empLogs  = Storage.getLogsByDate(today).filter(l => l.emp_id === employee.id);
+      const empLogs  = (await Storage.getLogsByDate(today)).filter(l => l.emp_id === employee.id);
       const checkin  = empLogs.find(l => l.type === '출근');
       const checkout = empLogs.find(l => l.type === '퇴근');
 
@@ -83,17 +83,17 @@ const Attendance = (() => {
       const type = checkin ? '퇴근' : '출근';
       const now  = new Date();
       const log  = {
-        log_id:    generateLogId(),
+        log_id:    await generateLogId(),
         card_id:   cardId,
         emp_id:    employee.id,
         name:      employee.name,
         dept:      employee.dept || '',
         type,
         timestamp: now.toISOString(),
-        synced:    false,
+        synced:    true,
       };
 
-      Storage.addAttendanceLog(log);
+      await Storage.addAttendanceLog(log);
 
       const tStr          = timeStr(log.timestamp);
       const lateMin       = type === '출근' ? calcLateMin(tStr, effectiveWs)      : 0;
@@ -111,12 +111,12 @@ const Attendance = (() => {
      * @param {string|null} deptFilter  부서명 필터 (null = 전체)
      * @param {object|null} ws          근무 설정
      */
-    getTodayStatus(deptFilter = null, ws = null) {
+    async getTodayStatus(deptFilter = null, ws = null) {
       const effectiveWs = ws || DEFAULT_WS;
       const today       = todayStr();
-      const todayLogs   = Storage.getLogsByDate(today);
+      const todayLogs   = await Storage.getLogsByDate(today);
 
-      let employees = Employees.getAll();
+      let employees = await Employees.getAll();
       if (deptFilter) employees = employees.filter(e => e.dept === deptFilter);
 
       return employees.map(emp => {
@@ -144,8 +144,8 @@ const Attendance = (() => {
      * @param {string|null} deptFilter
      * @param {object|null} ws
      */
-    getTodaySummary(deptFilter = null, ws = null) {
-      const statuses = this.getTodayStatus(deptFilter, ws);
+    async getTodaySummary(deptFilter = null, ws = null) {
+      const statuses = await this.getTodayStatus(deptFilter, ws);
       return {
         total:   statuses.length,
         present: statuses.filter(s => s.status === 'present').length,
@@ -161,9 +161,9 @@ const Attendance = (() => {
      * @param {string|null} empId
      * @param {object|null} ws
      */
-    queryLogs(startDate, endDate, empId = null, ws = null) {
+    async queryLogs(startDate, endDate, empId = null, ws = null) {
       const effectiveWs = ws || DEFAULT_WS;
-      let logs = Storage.getLogsByDateRange(startDate, endDate);
+      let logs = await Storage.getLogsByDateRange(startDate, endDate);
       if (empId) logs = logs.filter(l => l.emp_id === empId);
 
       const byKey = {};
@@ -173,14 +173,13 @@ const Attendance = (() => {
           byKey[key] = {
             date: log.timestamp.slice(0, 10),
             emp_id: log.emp_id, name: log.name,
-            dept: Employees.findById(log.emp_id)?.dept || '',
+            dept: log.dept || '',
             checkIn: null, checkOut: null, duration: null,
             lateMin: 0, earlyLeaveMin: 0, synced: true,
           };
         }
         if (log.type === '출근') byKey[key].checkIn  = timeStr(log.timestamp);
         if (log.type === '퇴근') byKey[key].checkOut = timeStr(log.timestamp);
-        if (!log.synced) byKey[key].synced = false;
       });
 
       const rows = Object.values(byKey);
@@ -193,7 +192,7 @@ const Attendance = (() => {
       return rows.sort((a, b) => b.date.localeCompare(a.date));
     },
 
-    /** CSV 내보내기 */
+    /** CSV 내보내기 (동기) */
     exportCSV(rows) {
       const header = '날짜,이름,부서,출근,퇴근,근무시간,지각(분),조퇴(분)';
       const lines  = rows.map(r =>
