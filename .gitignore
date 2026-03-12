@@ -1,0 +1,11 @@
+# 로컬 개발 환경
+.DS_Store
+Thumbs.db
+*.log
+
+# 에디터 설정
+.vscode/
+.idea/
+
+# 개발 서버 관련
+node_modules/
