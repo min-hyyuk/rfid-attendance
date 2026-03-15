@@ -36,6 +36,34 @@
 </header>
 
 <!-- ══════════════════════════════════════════════════════════
+     [관리자 모드] 로그인 화면
+═══════════════════════════════════════════════════════════ -->
+<div id="adminLoginOverlay" style="display:none; position:fixed; inset:0; z-index:10000;
+     background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+     display:none; align-items:center; justify-content:center; font-family:sans-serif;">
+  <div style="background:#fff; border-radius:16px; padding:40px; box-shadow:0 20px 60px rgba(0,0,0,.3);
+              max-width:380px; width:90%; text-align:center;">
+    <div style="font-size:3rem; margin-bottom:8px;">&#128274;</div>
+    <h2 style="margin:0 0 8px; color:#1e293b; font-size:1.4rem;">관리자 로그인</h2>
+    <p style="margin:0 0 24px; color:#64748b; font-size:.9rem;">관리자 페이지에 접근하려면 비밀번호를 입력하세요.</p>
+    <form id="adminLoginForm" autocomplete="off">
+      <input type="password" id="adminPwInput" placeholder="비밀번호 입력"
+             style="width:100%; box-sizing:border-box; padding:12px 16px; border:2px solid #e2e8f0;
+                    border-radius:8px; font-size:1rem; outline:none; transition:border .2s;"
+             onfocus="this.style.borderColor='#2563eb'" onblur="this.style.borderColor='#e2e8f0'">
+      <div id="adminLoginError" style="color:#dc2626; font-size:.85rem; margin-top:8px; min-height:1.2em;"></div>
+      <button type="submit"
+              style="width:100%; margin-top:12px; padding:12px; background:#2563eb; color:#fff;
+                     border:none; border-radius:8px; font-size:1rem; font-weight:600;
+                     cursor:pointer; transition:background .2s;"
+              onmouseover="this.style.background='#1d4ed8'" onmouseout="this.style.background='#2563eb'">
+        로그인
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
      [관리자 모드] 섹션 1 — 부서 관리
 ═══════════════════════════════════════════════════════════ -->
 <section id="sec-deptmgr" class="section" hidden>
@@ -397,6 +425,10 @@
 const urlParams    = new URLSearchParams(location.search);
 const DEPT_ID      = urlParams.get('dept');  // null = 관리자 모드
 const IS_DEPT_MODE = !!DEPT_ID;
+
+// ── 관리자 비밀번호 (원하는 비밀번호로 변경하세요) ──
+const ADMIN_PASSWORD = '1234';
+const ADMIN_SESSION_KEY = 'rfid_admin_authed';
 
 // currentDept 는 async 초기화 후 설정됨
 let currentDept   = null;
@@ -1146,6 +1178,30 @@ function showAlert(el, msg, type) {
         new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
     }
   } else {
+    // ── 관리자 모드: 로그인 확인 ──
+    if (sessionStorage.getItem(ADMIN_SESSION_KEY) !== 'true') {
+      const overlay = document.getElementById('adminLoginOverlay');
+      overlay.style.display = 'flex';
+      document.getElementById('adminPwInput').focus();
+
+      await new Promise((resolve) => {
+        document.getElementById('adminLoginForm').addEventListener('submit', function handler(e) {
+          e.preventDefault();
+          const pw = document.getElementById('adminPwInput').value;
+          if (pw === ADMIN_PASSWORD) {
+            sessionStorage.setItem(ADMIN_SESSION_KEY, 'true');
+            overlay.style.display = 'none';
+            e.target.removeEventListener('submit', handler);
+            resolve();
+          } else {
+            document.getElementById('adminLoginError').textContent = '비밀번호가 틀렸습니다.';
+            document.getElementById('adminPwInput').value = '';
+            document.getElementById('adminPwInput').focus();
+          }
+        });
+      });
+    }
+
     document.getElementById('hTitle').textContent = '&#127970; 출퇴근 관리 (관리자)';
     document.title = 'RFID 출퇴근 관리 — 관리자';
     document.getElementById('adminNav').hidden = false;
