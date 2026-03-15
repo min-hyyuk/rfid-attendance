@@ -76,10 +76,10 @@ const Storage = (() => {
       return data;
     },
 
-    /** dateStr: 'YYYY-MM-DD' — UTC 기준 해당 날짜 전체 */
+    /** dateStr: 'YYYY-MM-DD' — 로컬 시간 기준 해당 날짜 전체 */
     async getLogsByDate(dateStr) {
-      const start = dateStr + 'T00:00:00.000Z';
-      const end   = dateStr + 'T23:59:59.999Z';
+      const start = dateStr + 'T00:00:00';
+      const end   = dateStr + 'T23:59:59';
       return _unwrap(
         await _db.from('attendance_logs').select('*')
           .gte('timestamp', start).lte('timestamp', end).order('timestamp'),
@@ -88,8 +88,8 @@ const Storage = (() => {
     },
 
     async getLogsByDateRange(startDate, endDate) {
-      const start = startDate + 'T00:00:00.000Z';
-      const end   = endDate   + 'T23:59:59.999Z';
+      const start = startDate + 'T00:00:00';
+      const end   = endDate   + 'T23:59:59';
       return _unwrap(
         await _db.from('attendance_logs').select('*')
           .gte('timestamp', start).lte('timestamp', end).order('timestamp'),
@@ -234,6 +234,38 @@ const Storage = (() => {
         const { error } = await _db.from('settings').select('key').limit(1);
         return !error;
       } catch { return false; }
+    },
+
+    /**
+     * UTC → KST 마이그레이션 (1회성)
+     * 기존 UTC ISO 문자열(Z 접미사)을 KST 로컬 문자열로 변환
+     */
+    async migrateUtcToKst() {
+      const migrated = await this.getSetting('utc_to_kst_migrated');
+      if (migrated === 'true') return;
+
+      const logs = _unwrap(
+        await _db.from('attendance_logs').select('*').like('timestamp', '%Z'),
+        []
+      );
+      if (logs.length > 0) {
+        for (const log of logs) {
+          const utcDate = new Date(log.timestamp);
+          const kstDate = new Date(utcDate.getTime() + 9 * 60 * 60 * 1000);
+          const y = kstDate.getFullYear();
+          const M = String(kstDate.getMonth() + 1).padStart(2, '0');
+          const d = String(kstDate.getDate()).padStart(2, '0');
+          const h = String(kstDate.getHours()).padStart(2, '0');
+          const m = String(kstDate.getMinutes()).padStart(2, '0');
+          const s = String(kstDate.getSeconds()).padStart(2, '0');
+          const kstStr = `${y}-${M}-${d}T${h}:${m}:${s}`;
+          await _db.from('attendance_logs')
+            .update({ timestamp: kstStr })
+            .eq('log_id', log.log_id);
+        }
+        console.log(`UTC→KST 마이그레이션 완료: ${logs.length}건`);
+      }
+      await this.setSetting('utc_to_kst_migrated', 'true');
     },
 
     /** Supabase 클라이언트 직접 접근 */

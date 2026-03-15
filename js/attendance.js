@@ -19,18 +19,29 @@ const Attendance = (() => {
   };
 
   async function generateLogId() {
-    const dateStr   = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const todayLogs = await Storage.getLogsByDate(new Date().toISOString().slice(0, 10));
+    const today     = todayStr();
+    const dateStr   = today.replace(/-/g, '');
+    const todayLogs = await Storage.getLogsByDate(today);
     const count     = todayLogs.filter(l => l.log_id.startsWith('LOG' + dateStr)).length;
     return `LOG${dateStr}${String(count + 1).padStart(3, '0')}`;
   }
 
-  function todayStr() {
-    return new Date().toISOString().slice(0, 10);
+  function toLocalISOString(date) {
+    const y = date.getFullYear();
+    const M = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    const h = String(date.getHours()).padStart(2, '0');
+    const m = String(date.getMinutes()).padStart(2, '0');
+    const s = String(date.getSeconds()).padStart(2, '0');
+    return `${y}-${M}-${d}T${h}:${m}:${s}`;
   }
 
-  function timeStr(isoString) {
-    return isoString.slice(11, 19); // HH:MM:SS
+  function todayStr() {
+    return toLocalISOString(new Date()).slice(0, 10);
+  }
+
+  function timeStr(timestamp) {
+    return timestamp.slice(11, 19); // HH:MM:SS
   }
 
   function toMin(t) {
@@ -89,7 +100,7 @@ const Attendance = (() => {
         name:      employee.name,
         dept:      employee.dept || '',
         type,
-        timestamp: now.toISOString(),
+        timestamp: toLocalISOString(now),
         synced:    true,
       };
 

@@ -1148,6 +1148,9 @@ function showAlert(el, msg, type) {
    18. 비동기 초기화
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 (async () => {
+  // UTC→KST 마이그레이션 (기존 기록 시간 보정)
+  await Storage.migrateUtcToKst();
+
   // 부서 모드: Supabase에서 부서 정보 로드
   if (DEPT_ID) {
     currentDept = await Storage.findDepartmentById(DEPT_ID);
