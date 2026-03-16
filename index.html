@@ -630,6 +630,7 @@ function showScanResult(result) {
       <div class="scan-type">이미 퇴근 완료</div>
       <div class="scan-name">${result.employee.name}</div>
       <div class="scan-hint">오늘은 이미 퇴근 처리되었습니다.</div>`;
+    speakResult(result.employee.name, '이미 출퇴근 처리가 완료');
 
   } else if (result.type === '출근') {
     panel.classList.add('scan-in');
