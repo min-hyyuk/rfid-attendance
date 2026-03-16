@@ -234,8 +234,26 @@ a:hover { text-decoration: underline; }
 }
 
 .scan-panel.standby {
-  background: var(--gray-100);
-  border: 2px dashed var(--gray-300);
+  background: linear-gradient(135deg, #f0f4ff, #e8eeff);
+  border: 2px solid var(--gray-200);
+  min-height: 280px;
+  padding: 40px 28px;
+}
+
+.scan-clock {
+  font-size: 4.5rem;
+  font-weight: 800;
+  letter-spacing: -2px;
+  color: var(--gray-800);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.scan-date {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--gray-500);
+  margin-top: 4px;
 }
 
 .scan-panel.scan-in {

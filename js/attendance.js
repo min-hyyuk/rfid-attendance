@@ -16,6 +16,8 @@ const Attendance = (() => {
     start: '09:00', end: '18:00',
     late_min: 0, early_min: 0,
     work_days: [1, 2, 3, 4, 5],
+    lunch:  { start: '12:00', end: '13:00' },
+    breaks: [],
   };
 
   async function generateLogId() {
@@ -59,8 +61,41 @@ const Attendance = (() => {
     return Math.max(0, (toMin(ws.end) - (ws.early_min || 0)) - toMin(checkOutTime));
   }
 
-  function calcDuration(inTime, outTime) {
-    const diff = toMin(outTime) - toMin(inTime);
+  /** 두 시간 범위의 겹치는 분 수 계산 */
+  function overlapMin(s1, e1, s2, e2) {
+    const start = Math.max(s1, s2);
+    const end   = Math.min(e1, e2);
+    return Math.max(0, end - start);
+  }
+
+  /** 점심+휴게 시간 중 실제 근무 구간과 겹치는 총 분 */
+  function calcBreakMin(inMin, outMin, ws) {
+    let total = 0;
+    if (ws.lunch && ws.lunch.start && ws.lunch.end) {
+      total += overlapMin(inMin, outMin, toMin(ws.lunch.start), toMin(ws.lunch.end));
+    }
+    if (ws.breaks && ws.breaks.length > 0) {
+      ws.breaks.forEach(b => {
+        if (b.start && b.end) {
+          total += overlapMin(inMin, outMin, toMin(b.start), toMin(b.end));
+        }
+      });
+    }
+    return total;
+  }
+
+  /** 실 근로시간 계산 (점심/휴게 제외, 조기출근 cap) */
+  function calcDuration(inTime, outTime, ws) {
+    let inMin  = toMin(inTime);
+    const outMin = toMin(outTime);
+    // 출근시간이 근무 시작보다 빠르면 근무 시작 시간으로 cap
+    if (ws && toMin(ws.start) > inMin) {
+      inMin = toMin(ws.start);
+    }
+    const raw = outMin - inMin;
+    if (raw <= 0) return null;
+    const breakTotal = ws ? calcBreakMin(inMin, outMin, ws) : 0;
+    const diff = raw - breakTotal;
     if (diff <= 0) return null;
     return `${Math.floor(diff / 60)}시간 ${diff % 60}분`;
   }
@@ -142,7 +177,7 @@ const Attendance = (() => {
         const checkInTime   = checkin  ? timeStr(checkin.timestamp)  : null;
         const checkOutTime  = checkout ? timeStr(checkout.timestamp) : null;
         const duration      = (checkInTime && checkOutTime)
-          ? calcDuration(checkInTime, checkOutTime) : null;
+          ? calcDuration(checkInTime, checkOutTime, effectiveWs) : null;
         const lateMin       = checkInTime  ? calcLateMin(checkInTime, effectiveWs)       : 0;
         const earlyLeaveMin = checkOutTime ? calcEarlyLeaveMin(checkOutTime, effectiveWs) : 0;
 
@@ -195,7 +230,7 @@ const Attendance = (() => {
 
       const rows = Object.values(byKey);
       rows.forEach(r => {
-        if (r.checkIn && r.checkOut) r.duration = calcDuration(r.checkIn, r.checkOut);
+        if (r.checkIn && r.checkOut) r.duration = calcDuration(r.checkIn, r.checkOut, effectiveWs);
         r.lateMin       = r.checkIn  ? calcLateMin(r.checkIn, effectiveWs)       : 0;
         r.earlyLeaveMin = r.checkOut ? calcEarlyLeaveMin(r.checkOut, effectiveWs) : 0;
       });

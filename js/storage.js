@@ -15,6 +15,8 @@ const Storage = (() => {
     late_min:  0,
     early_min: 0,
     work_days: [1, 2, 3, 4, 5],
+    lunch:     { start: '12:00', end: '13:00' },
+    breaks:    [],
   };
 
   /** Supabase 응답에서 data를 추출, error 시 throw */

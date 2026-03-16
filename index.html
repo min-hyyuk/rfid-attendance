@@ -185,8 +185,9 @@
         </div>
         <div class="card-body">
           <div class="scan-panel standby" id="scanPanel">
-            <div class="scan-icon">&#128179;</div>
-            <div class="scan-hint">카드를 리더기에 대주세요</div>
+            <div class="scan-clock" id="scanClock"></div>
+            <div class="scan-date" id="scanDate"></div>
+            <div class="scan-hint" style="margin-top:12px;">카드를 리더기에 대주세요</div>
           </div>
         </div>
       </div>
@@ -352,6 +353,30 @@
                 <input type="number" id="wsEarlyMin" min="0" max="120" style="width:80px;">
               </div>
             </div>
+            <!-- 점심시간 -->
+            <div style="margin:16px 0 0;">
+              <label style="font-size:.8125rem; font-weight:600; color:var(--gray-700); display:block; margin-bottom:8px;">점심시간</label>
+              <p style="font-size:.75rem; color:var(--gray-400); margin-bottom:8px;">점심시간은 근로시간에서 제외됩니다.</p>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="wsLunchStart">시작</label>
+                  <input type="time" id="wsLunchStart">
+                </div>
+                <div class="form-group">
+                  <label for="wsLunchEnd">종료</label>
+                  <input type="time" id="wsLunchEnd">
+                </div>
+              </div>
+            </div>
+
+            <!-- 휴게시간 (여러 건) -->
+            <div style="margin:16px 0 0;">
+              <label style="font-size:.8125rem; font-weight:600; color:var(--gray-700); display:block; margin-bottom:8px;">휴게시간</label>
+              <p style="font-size:.75rem; color:var(--danger); margin-bottom:8px;">* 휴게시간은 근로시간에서 제외됩니다. (근로기준법 제54조)</p>
+              <div id="breaksList"></div>
+              <button type="button" class="btn btn-secondary btn-sm" id="addBreakBtn" style="margin-top:6px;">+ 휴게시간 추가</button>
+            </div>
+
             <div style="margin:10px 0 14px;">
               <label style="font-size:.8125rem; font-weight:600; color:var(--gray-700); display:block; margin-bottom:8px;">근무 요일</label>
               <div class="workday-checks">
@@ -542,6 +567,40 @@ async function manualRegister(cardId) {
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    6. 스캔 패널
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+const DAY_NAMES = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
+
+function updateClock() {
+  const now = new Date();
+  const clockEl = document.getElementById('scanClock');
+  const dateEl  = document.getElementById('scanDate');
+  if (!clockEl || !dateEl) return;
+  // 패널이 standby 상태일 때만 시계 표시
+  const panel = document.getElementById('scanPanel');
+  if (!panel || !panel.classList.contains('standby')) return;
+  const h = String(now.getHours()).padStart(2, '0');
+  const m = String(now.getMinutes()).padStart(2, '0');
+  const s = String(now.getSeconds()).padStart(2, '0');
+  clockEl.textContent = `${h}:${m}:${s}`;
+  const y   = now.getFullYear();
+  const mon = now.getMonth() + 1;
+  const d   = now.getDate();
+  const day = DAY_NAMES[now.getDay()];
+  dateEl.textContent = `${y}년 ${mon}월 ${d}일 ${day}`;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+/** 음성 안내 (Web Speech API) */
+function speakResult(name, type) {
+  if (!('speechSynthesis' in window)) return;
+  window.speechSynthesis.cancel();
+  const msg = new SpeechSynthesisUtterance(`${name}님, ${type} 처리되었습니다.`);
+  msg.lang = 'ko-KR';
+  msg.rate = 1.0;
+  msg.pitch = 1.0;
+  window.speechSynthesis.speak(msg);
+}
+
 function showScanResult(result) {
   const panel = document.getElementById('scanPanel');
   if (!panel) return;
@@ -583,6 +642,7 @@ function showScanResult(result) {
       <div class="scan-time">${result.employee.dept ? result.employee.dept + '&nbsp;&nbsp;·&nbsp;&nbsp;' : ''}${result.timeStr}</div>
       ${lateNote}
       <div class="scan-card">카드: ${result.log.card_id}</div>`;
+    speakResult(result.employee.name, '출근');
 
   } else if (result.type === '퇴근') {
     panel.classList.add('scan-out');
@@ -595,11 +655,16 @@ function showScanResult(result) {
       <div class="scan-time">${result.employee.dept ? result.employee.dept + '&nbsp;&nbsp;·&nbsp;&nbsp;' : ''}${result.timeStr}</div>
       ${earlyNote}
       <div class="scan-card">카드: ${result.log.card_id}</div>`;
+    speakResult(result.employee.name, '퇴근');
   }
 
   scanResetTimer = setTimeout(() => {
     panel.className = 'scan-panel standby';
-    panel.innerHTML = `<div class="scan-icon">&#128179;</div><div class="scan-hint">카드를 리더기에 대주세요</div>`;
+    panel.innerHTML = `
+      <div class="scan-clock" id="scanClock"></div>
+      <div class="scan-date" id="scanDate"></div>
+      <div class="scan-hint" style="margin-top:12px;">카드를 리더기에 대주세요</div>`;
+    updateClock();
   }, 5000);
 }
 
@@ -918,6 +983,37 @@ document.getElementById('printReportBtn').addEventListener('click', async () => 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    13. 근무 설정 탭 (부서 모드)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+/** 휴게시간 행 추가 */
+function addBreakRow(startVal = '', endVal = '', nameVal = '') {
+  const wrap = document.getElementById('breaksList');
+  const row = document.createElement('div');
+  row.className = 'break-row';
+  row.style.cssText = 'display:flex; gap:8px; align-items:center; margin-bottom:6px;';
+  row.innerHTML = `
+    <input type="time" class="brk-start" value="${startVal}" style="width:130px;">
+    <span>~</span>
+    <input type="time" class="brk-end" value="${endVal}" style="width:130px;">
+    <input type="text" class="brk-name" value="${nameVal}" placeholder="명칭 (선택)" style="width:120px;">
+    <button type="button" class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="this.parentElement.remove()">삭제</button>
+  `;
+  wrap.appendChild(row);
+}
+
+/** 현재 UI에서 breaks 배열 수집 */
+function collectBreaks() {
+  const rows = document.querySelectorAll('#breaksList .break-row');
+  const breaks = [];
+  rows.forEach(row => {
+    const s = row.querySelector('.brk-start').value;
+    const e = row.querySelector('.brk-end').value;
+    const n = row.querySelector('.brk-name').value.trim();
+    if (s && e) breaks.push({ start: s, end: e, name: n });
+  });
+  return breaks;
+}
+
+document.getElementById('addBreakBtn').addEventListener('click', () => addBreakRow());
+
 async function loadWorkSettings() {
   if (!IS_DEPT_MODE) return;
   const ws = await Storage.getDeptWorkSettings(currentDept.id);
@@ -928,6 +1024,13 @@ async function loadWorkSettings() {
   document.querySelectorAll('.wd-check').forEach(cb => {
     cb.checked = ws.work_days.includes(parseInt(cb.value, 10));
   });
+  // 점심시간
+  const lunch = ws.lunch || {};
+  document.getElementById('wsLunchStart').value = lunch.start || '12:00';
+  document.getElementById('wsLunchEnd').value   = lunch.end   || '13:00';
+  // 휴게시간
+  document.getElementById('breaksList').innerHTML = '';
+  (ws.breaks || []).forEach(b => addBreakRow(b.start, b.end, b.name || ''));
 }
 
 document.getElementById('saveWorkSettingsBtn').addEventListener('click', async () => {
@@ -938,6 +1041,11 @@ document.getElementById('saveWorkSettingsBtn').addEventListener('click', async (
     late_min:  parseInt(document.getElementById('wsLateMin').value)  || 0,
     early_min: parseInt(document.getElementById('wsEarlyMin').value) || 0,
     work_days: [...document.querySelectorAll('.wd-check:checked')].map(cb => parseInt(cb.value, 10)),
+    lunch: {
+      start: document.getElementById('wsLunchStart').value || '12:00',
+      end:   document.getElementById('wsLunchEnd').value   || '13:00',
+    },
+    breaks: collectBreaks(),
   };
   await Storage.saveDeptWorkSettings(currentDept.id, ws);
   const msgEl = document.getElementById('wsAlert');
@@ -975,7 +1083,12 @@ async function renderDeptTable() {
           ${list.map(d => {
             const empCnt = allEmps.filter(e => e.dept === d.name).length;
             const ws     = d.work_settings || {};
-            const wsNote = ws.start ? `${ws.start}~${ws.end}` : '기본';
+            const lunchNote = ws.lunch ? `점심 ${ws.lunch.start}~${ws.lunch.end}` : '';
+            const breakNote = (ws.breaks && ws.breaks.length > 0)
+              ? ws.breaks.map(b => `${b.name || '휴게'} ${b.start}~${b.end}`).join(', ') : '';
+            const wsNote = ws.start
+              ? `${ws.start}~${ws.end}` + (lunchNote ? `<br><span style="font-size:.75rem;color:var(--gray-400);">${lunchNote}${breakNote ? ', ' + breakNote : ''}</span>` : '')
+              : '기본';
             const url    = `${location.origin}${location.pathname}?dept=${d.id}`;
             return `
             <tr>
