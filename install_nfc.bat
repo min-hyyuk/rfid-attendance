@@ -32,13 +32,15 @@ set "NFC_SCRIPT=%INSTALL_DIR%\nfc_reader.py"
 
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 
-:: Generate nfc_reader.py (embedded - no external file needed)
-python -c "import urllib.request,os; url='https://raw.githubusercontent.com/min-hyyuk/rfid-attendance/main/nfc_reader.py'; dst=os.path.join(os.environ['LOCALAPPDATA'],'NFC_Reader','nfc_reader.py'); urllib.request.urlretrieve(url,dst); print('  Downloaded:', dst)"
-if %errorlevel% neq 0 (
+:: Download nfc_reader.py using curl (Windows built-in, no SSL cert issues)
+curl -L -o "%NFC_SCRIPT%" "https://raw.githubusercontent.com/min-hyyuk/rfid-attendance/main/nfc_reader.py" 2>nul
+if not exist "%NFC_SCRIPT%" (
     echo [ERROR] Failed to download nfc_reader.py
+    echo   Check your internet connection.
     pause
     exit /b 1
 )
+echo   Downloaded: %NFC_SCRIPT%
 
 :: Create command wrapper
 echo @pythonw "%%LOCALAPPDATA%%\NFC_Reader\nfc_reader.py" %%* > "%INSTALL_DIR%\nfc_reader.cmd"
