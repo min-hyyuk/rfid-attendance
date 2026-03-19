@@ -15,10 +15,11 @@
   <h1 id="hTitle">&#127970; 출퇴근 관리</h1>
   <span class="clock" id="clock"></span>
 
-  <!-- Serial 연결 (부서 모드에서만 표시) -->
+  <!-- 리더기 연결 (부서 모드에서만 표시) -->
   <div class="header-serial" id="serialArea" hidden>
-    <span class="badge badge-disconnected" id="hBadge">미연결</span>
-    <button class="btn btn-sm btn-connect" id="hConnectBtn">연결</button>
+    <span class="badge badge-disconnected" id="hNfcBadge" title="ACR122U NFC (자동)">NFC 대기</span>
+    <span class="badge badge-disconnected" id="hBadge">COM 미연결</span>
+    <button class="btn btn-sm btn-connect" id="hConnectBtn">COM 연결</button>
     <span id="hStatusMsg" class="header-status-msg"></span>
   </div>
 
@@ -164,6 +165,33 @@
                     border:1px solid var(--gray-200); border-radius:var(--radius);
                     font-size:.8125rem; color:var(--gray-500);">
           연결 대상: <span id="dbUrlDisplay" style="font-family:monospace;"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ACR122U NFC 설치 카드 -->
+    <div class="card">
+      <div class="card-header"><h2>&#128225; ACR122U NFC 리더기 설치</h2></div>
+      <div class="card-body">
+        <p style="font-size:.875rem; color:var(--gray-600); line-height:1.8; margin-bottom:16px;">
+          ACR122U NFC 리더기를 사용하는 PC에서 <b>1회만</b> 설치하면 됩니다.<br>
+          설치 후에는 PC 부팅 시 자동으로 NFC 서버가 실행되어<br>
+          브라우저에서 바로 NFC 카드를 인식합니다.
+        </p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <button class="btn btn-primary btn-lg" id="downloadInstallNfc">&#128229; install_nfc.bat 다운로드</button>
+          <span style="font-size:.8125rem; color:var(--gray-400);">다운로드 후 더블클릭으로 실행</span>
+        </div>
+        <div style="margin-top:16px; padding:14px; background:var(--gray-50);
+                    border:1px solid var(--gray-200); border-radius:var(--radius);
+                    font-size:.8125rem; color:var(--gray-600); line-height:1.8;">
+          <b>설치 과정 (자동):</b>
+          <ol style="padding-left:18px; margin-top:6px;">
+            <li>Python 설치 여부 확인 (미설치 시 다운로드 페이지 안내)</li>
+            <li>pyscard, websockets 라이브러리 설치</li>
+            <li>Windows 시작프로그램에 NFC 서버 자동 등록</li>
+            <li>NFC 서버 즉시 시작</li>
+          </ol>
         </div>
       </div>
     </div>
@@ -504,6 +532,7 @@ document.querySelectorAll('.app-nav a').forEach(a => {
    4. Serial 연결 (부서 모드 전용)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 if (IS_DEPT_MODE) {
+  // ── COM 포트 (CR100) 상태 ──
   SerialReader.setOnStatus((status, msg) => {
     const badge = document.getElementById('hBadge');
     const btn   = document.getElementById('hConnectBtn');
@@ -511,14 +540,29 @@ if (IS_DEPT_MODE) {
     msgEl.textContent = msg;
     setTimeout(() => { msgEl.textContent = ''; }, 4000);
     if (status === 'connected') {
-      badge.className = 'badge badge-connected'; badge.textContent = '연결됨';
+      badge.className = 'badge badge-connected'; badge.textContent = 'COM 연결됨';
       btn.textContent = '해제'; btn.className = 'btn btn-sm btn-disconnect';
     } else {
-      badge.className = 'badge badge-disconnected'; badge.textContent = '미연결';
-      btn.textContent = '연결'; btn.className = 'btn btn-sm btn-connect';
+      badge.className = 'badge badge-disconnected'; badge.textContent = 'COM 미연결';
+      btn.textContent = 'COM 연결'; btn.className = 'btn btn-sm btn-connect';
     }
   });
 
+  // ── NFC WebSocket (ACR122U) 상태 — 자동 ──
+  SerialReader.setOnNfcStatus((connected, readerName) => {
+    const badge = document.getElementById('hNfcBadge');
+    if (connected) {
+      badge.className = 'badge badge-connected';
+      badge.textContent = 'NFC 연결됨';
+      badge.title = readerName || 'ACR122U NFC';
+    } else {
+      badge.className = 'badge badge-disconnected';
+      badge.textContent = 'NFC 대기';
+      badge.title = 'ACR122U NFC — nfc_reader.py 실행 필요';
+    }
+  });
+
+  // ── 카드 태그 공통 핸들러 (Serial + NFC 모두 여기로 합류) ──
   SerialReader.setOnCard((cardId) => {
     if (currentSection === 'attendance') {
       handleCardScan(cardId).catch(err => console.error(err));
@@ -1248,6 +1292,18 @@ document.getElementById('clearData').addEventListener('click', async () => {
   await updateConnectionStatus();
   alert('데이터가 삭제되었습니다.');
 });
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   16-b. ACR122U 설치 다운로드 (관리자 모드)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+if (!IS_DEPT_MODE) {
+  document.getElementById('downloadInstallNfc').addEventListener('click', () => {
+    const a = document.createElement('a');
+    a.href = 'install_nfc.bat';
+    a.download = 'install_nfc.bat';
+    a.click();
+  });
+}
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    17. 유틸
