@@ -23,9 +23,16 @@ const Attendance = (() => {
   async function generateLogId() {
     const today     = todayStr();
     const dateStr   = today.replace(/-/g, '');
+    const prefix    = 'LOG' + dateStr;
     const todayLogs = await Storage.getLogsByDate(today);
-    const count     = todayLogs.filter(l => l.log_id.startsWith('LOG' + dateStr)).length;
-    return `LOG${dateStr}${String(count + 1).padStart(3, '0')}`;
+    let maxNum = 0;
+    todayLogs.forEach(l => {
+      if (l.log_id.startsWith(prefix)) {
+        const num = parseInt(l.log_id.slice(prefix.length), 10);
+        if (num > maxNum) maxNum = num;
+      }
+    });
+    return `${prefix}${String(maxNum + 1).padStart(3, '0')}`;
   }
 
   function toLocalISOString(date) {
