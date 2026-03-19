@@ -529,59 +529,91 @@ document.querySelectorAll('.app-nav a').forEach(a => {
 });
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   4. Serial 연결 (부서 모드 전용)
+   4. 스캔 패널 시계 (Serial 설정보다 먼저 실행 — 에러에 영향 안 받도록)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+const DAY_NAMES = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
+
+function updateClock() {
+  const now = new Date();
+  const clockEl = document.getElementById('scanClock');
+  const dateEl  = document.getElementById('scanDate');
+  if (!clockEl || !dateEl) return;
+  const panel = document.getElementById('scanPanel');
+  if (!panel || !panel.classList.contains('standby')) return;
+  const h = String(now.getHours()).padStart(2, '0');
+  const m = String(now.getMinutes()).padStart(2, '0');
+  const s = String(now.getSeconds()).padStart(2, '0');
+  clockEl.textContent = `${h}:${m}:${s}`;
+  const y   = now.getFullYear();
+  const mon = now.getMonth() + 1;
+  const d   = now.getDate();
+  const day = DAY_NAMES[now.getDay()];
+  dateEl.textContent = `${y}년 ${mon}월 ${d}일 ${day}`;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   5. Serial / NFC 연결 (부서 모드 전용)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 if (IS_DEPT_MODE) {
-  // ── COM 포트 (CR100) 상태 ──
-  SerialReader.setOnStatus((status, msg) => {
-    const badge = document.getElementById('hBadge');
-    const btn   = document.getElementById('hConnectBtn');
-    const msgEl = document.getElementById('hStatusMsg');
-    msgEl.textContent = msg;
-    setTimeout(() => { msgEl.textContent = ''; }, 4000);
-    if (status === 'connected') {
-      badge.className = 'badge badge-connected'; badge.textContent = 'COM 연결됨';
-      btn.textContent = '해제'; btn.className = 'btn btn-sm btn-disconnect';
-    } else {
-      badge.className = 'badge badge-disconnected'; badge.textContent = 'COM 미연결';
-      btn.textContent = 'COM 연결'; btn.className = 'btn btn-sm btn-connect';
-    }
-  });
+  try {
+    // ── COM 포트 (CR100) 상태 ──
+    SerialReader.setOnStatus((status, msg) => {
+      const badge = document.getElementById('hBadge');
+      const btn   = document.getElementById('hConnectBtn');
+      const msgEl = document.getElementById('hStatusMsg');
+      msgEl.textContent = msg;
+      setTimeout(() => { msgEl.textContent = ''; }, 4000);
+      if (status === 'connected') {
+        badge.className = 'badge badge-connected'; badge.textContent = 'COM 연결됨';
+        btn.textContent = '해제'; btn.className = 'btn btn-sm btn-disconnect';
+      } else {
+        badge.className = 'badge badge-disconnected'; badge.textContent = 'COM 미연결';
+        btn.textContent = 'COM 연결'; btn.className = 'btn btn-sm btn-connect';
+      }
+    });
 
-  // ── NFC WebSocket (ACR122U) 상태 — 자동 ──
-  SerialReader.setOnNfcStatus((connected, readerName) => {
-    const badge = document.getElementById('hNfcBadge');
-    if (connected) {
-      badge.className = 'badge badge-connected';
-      badge.textContent = 'NFC 연결됨';
-      badge.title = readerName || 'ACR122U NFC';
-    } else {
-      badge.className = 'badge badge-disconnected';
-      badge.textContent = 'NFC 대기';
-      badge.title = 'ACR122U NFC — nfc_reader.py 실행 필요';
+    // ── NFC WebSocket (ACR122U) 상태 — 자동 ──
+    if (typeof SerialReader.setOnNfcStatus === 'function') {
+      SerialReader.setOnNfcStatus((connected, readerName) => {
+        const badge = document.getElementById('hNfcBadge');
+        if (!badge) return;
+        if (connected) {
+          badge.className = 'badge badge-connected';
+          badge.textContent = 'NFC 연결됨';
+          badge.title = readerName || 'ACR122U NFC';
+        } else {
+          badge.className = 'badge badge-disconnected';
+          badge.textContent = 'NFC 대기';
+          badge.title = 'ACR122U NFC — nfc_reader.py 실행 필요';
+        }
+      });
     }
-  });
 
-  // ── 카드 태그 공통 핸들러 (Serial + NFC 모두 여기로 합류) ──
-  SerialReader.setOnCard((cardId) => {
-    if (currentSection === 'attendance') {
-      handleCardScan(cardId).catch(err => console.error(err));
-    } else if (currentSection === 'admin' && currentAdminTab === 'emp') {
-      const input = document.getElementById('fCardId');
-      input.value = cardId;
-      input.classList.add('highlight');
-      setTimeout(() => input.classList.remove('highlight'), 1000);
-    }
-  });
+    // ── 카드 태그 공통 핸들러 (Serial + NFC 모두 여기로 합류) ──
+    SerialReader.setOnCard((cardId) => {
+      if (currentSection === 'attendance') {
+        handleCardScan(cardId).catch(err => console.error(err));
+      } else if (currentSection === 'admin' && currentAdminTab === 'emp') {
+        const input = document.getElementById('fCardId');
+        input.value = cardId;
+        input.classList.add('highlight');
+        setTimeout(() => input.classList.remove('highlight'), 1000);
+      }
+    });
 
-  document.getElementById('hConnectBtn').addEventListener('click', async () => {
-    if (SerialReader.isConnected()) await SerialReader.disconnect();
-    else await SerialReader.connect();
-  });
+    document.getElementById('hConnectBtn').addEventListener('click', async () => {
+      if (SerialReader.isConnected()) await SerialReader.disconnect();
+      else await SerialReader.connect();
+    });
+  } catch (e) {
+    console.warn('Serial/NFC 초기화 오류 (무시):', e);
+  }
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   5. 카드 스캔 처리 (부서 모드)
+   6. 카드 스캔 처리 (부서 모드)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 async function handleCardScan(cardId) {
   const emp = await Employees.findByCardId(cardId);
@@ -607,32 +639,6 @@ async function manualRegister(cardId) {
     await renderRightPanel(result.success ? result.employee?.id : null);
   } catch (e) { console.error(e); }
 }
-
-/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   6. 스캔 패널
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-const DAY_NAMES = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
-
-function updateClock() {
-  const now = new Date();
-  const clockEl = document.getElementById('scanClock');
-  const dateEl  = document.getElementById('scanDate');
-  if (!clockEl || !dateEl) return;
-  // 패널이 standby 상태일 때만 시계 표시
-  const panel = document.getElementById('scanPanel');
-  if (!panel || !panel.classList.contains('standby')) return;
-  const h = String(now.getHours()).padStart(2, '0');
-  const m = String(now.getMinutes()).padStart(2, '0');
-  const s = String(now.getSeconds()).padStart(2, '0');
-  clockEl.textContent = `${h}:${m}:${s}`;
-  const y   = now.getFullYear();
-  const mon = now.getMonth() + 1;
-  const d   = now.getDate();
-  const day = DAY_NAMES[now.getDay()];
-  dateEl.textContent = `${y}년 ${mon}월 ${d}일 ${day}`;
-}
-setInterval(updateClock, 1000);
-updateClock();
 
 /** 음성 안내 (Web Speech API) */
 function speakResult(name, type) {

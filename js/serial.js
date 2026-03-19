@@ -34,7 +34,7 @@ const SerialReader = (() => {
 
     try {
       ws = new WebSocket(WS_URL);
-    } catch { scheduleWsRetry(); return; }
+    } catch (e) { scheduleWsRetry(); return; }
 
     ws.onopen = () => {
       console.log('[NFC-WS] 서버 연결됨');
