@@ -25,8 +25,13 @@ except ImportError:
     input("Press Enter to exit...")
     sys.exit(1)
 
-# ── WinSCard API (ctypes) ────────────────────────────────
+# ── WinSCard API (ctypes, 64-bit safe) ───────────────────
 _winscard = ctypes.windll.winscard
+
+# SCARDCONTEXT / SCARDHANDLE = ULONG_PTR (pointer-sized)
+SCARDCONTEXT = ctypes.POINTER(ctypes.c_ulonglong) if ctypes.sizeof(ctypes.c_void_p) == 8 else wt.DWORD
+SCARDHANDLE  = ctypes.POINTER(ctypes.c_ulonglong) if ctypes.sizeof(ctypes.c_void_p) == 8 else wt.DWORD
+ULONG_PTR    = ctypes.c_uint64 if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_uint32
 
 SCARD_SCOPE_USER       = 0
 SCARD_SHARE_SHARED     = 2
@@ -34,9 +39,6 @@ SCARD_PROTOCOL_T0      = 1
 SCARD_PROTOCOL_T1      = 2
 SCARD_LEAVE_CARD       = 0
 SCARD_S_SUCCESS        = 0
-SCARD_E_NO_READERS     = 0x8010002E
-SCARD_E_NO_SMARTCARD   = 0x8010000C
-SCARD_E_TIMEOUT        = 0x8010000A
 SCARD_AUTOALLOCATE     = 0xFFFFFFFF
 
 class SCARD_IO_REQUEST(ctypes.Structure):
@@ -45,9 +47,38 @@ class SCARD_IO_REQUEST(ctypes.Structure):
 g_rgSCardT1Pci = SCARD_IO_REQUEST(SCARD_PROTOCOL_T1, 8)
 g_rgSCardT0Pci = SCARD_IO_REQUEST(SCARD_PROTOCOL_T0, 8)
 
+# ── Define argtypes/restype for 64-bit safety ────────────
+_winscard.SCardEstablishContext.argtypes = [
+    wt.DWORD, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ULONG_PTR)]
+_winscard.SCardEstablishContext.restype = ctypes.c_long
+
+_winscard.SCardListReadersA.argtypes = [
+    ULONG_PTR, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(wt.DWORD)]
+_winscard.SCardListReadersA.restype = ctypes.c_long
+
+_winscard.SCardFreeMemory.argtypes = [ULONG_PTR, ctypes.c_void_p]
+_winscard.SCardFreeMemory.restype = ctypes.c_long
+
+_winscard.SCardConnectA.argtypes = [
+    ULONG_PTR, ctypes.c_char_p, wt.DWORD, wt.DWORD,
+    ctypes.POINTER(ULONG_PTR), ctypes.POINTER(wt.DWORD)]
+_winscard.SCardConnectA.restype = ctypes.c_long
+
+_winscard.SCardTransmit.argtypes = [
+    ULONG_PTR, ctypes.POINTER(SCARD_IO_REQUEST),
+    ctypes.POINTER(ctypes.c_ubyte), wt.DWORD,
+    ctypes.c_void_p, ctypes.POINTER(ctypes.c_ubyte), ctypes.POINTER(wt.DWORD)]
+_winscard.SCardTransmit.restype = ctypes.c_long
+
+_winscard.SCardDisconnect.argtypes = [ULONG_PTR, wt.DWORD]
+_winscard.SCardDisconnect.restype = ctypes.c_long
+
+_winscard.SCardReleaseContext.argtypes = [ULONG_PTR]
+_winscard.SCardReleaseContext.restype = ctypes.c_long
+
 
 def scard_establish():
-    hContext = wt.HANDLE()
+    hContext = ULONG_PTR()
     ret = _winscard.SCardEstablishContext(
         SCARD_SCOPE_USER, None, None, ctypes.byref(hContext))
     if ret != SCARD_S_SUCCESS:
@@ -59,11 +90,11 @@ def scard_list_readers(hContext):
     buf = ctypes.c_char_p()
     buflen = wt.DWORD(SCARD_AUTOALLOCATE)
     ret = _winscard.SCardListReadersA(
-        hContext, None, ctypes.byref(buf), ctypes.byref(buflen))
+        ULONG_PTR(hContext), None, ctypes.byref(buf), ctypes.byref(buflen))
     if ret != SCARD_S_SUCCESS:
         return []
     raw = ctypes.string_at(buf, buflen.value)
-    _winscard.SCardFreeMemory(hContext, buf)
+    _winscard.SCardFreeMemory(ULONG_PTR(hContext), buf)
     readers = []
     for name in raw.split(b'\x00'):
         if name:
@@ -72,10 +103,10 @@ def scard_list_readers(hContext):
 
 
 def scard_connect(hContext, reader_name):
-    hCard = wt.HANDLE()
+    hCard = ULONG_PTR()
     dwProtocol = wt.DWORD()
     ret = _winscard.SCardConnectA(
-        hContext, reader_name.encode('ascii'),
+        ULONG_PTR(hContext), reader_name.encode('ascii'),
         SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1,
         ctypes.byref(hCard), ctypes.byref(dwProtocol))
     if ret != SCARD_S_SUCCESS:
@@ -89,7 +120,7 @@ def scard_transmit(hCard, protocol, apdu_bytes):
     recv_buf = (ctypes.c_ubyte * 260)()
     recv_len = wt.DWORD(260)
     ret = _winscard.SCardTransmit(
-        hCard, ctypes.byref(pci), send_buf, len(apdu_bytes),
+        ULONG_PTR(hCard), ctypes.byref(pci), send_buf, len(apdu_bytes),
         None, recv_buf, ctypes.byref(recv_len))
     if ret != SCARD_S_SUCCESS:
         return None, 0, 0
@@ -100,11 +131,11 @@ def scard_transmit(hCard, protocol, apdu_bytes):
 
 
 def scard_disconnect(hCard):
-    _winscard.SCardDisconnect(hCard, SCARD_LEAVE_CARD)
+    _winscard.SCardDisconnect(ULONG_PTR(hCard), SCARD_LEAVE_CARD)
 
 
 def scard_release(hContext):
-    _winscard.SCardReleaseContext(hContext)
+    _winscard.SCardReleaseContext(ULONG_PTR(hContext))
 
 
 # ── NFC Reader Logic ─────────────────────────────────────
