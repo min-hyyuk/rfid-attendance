@@ -10,12 +10,13 @@
 | 항목 | 내용 |
 |------|------|
 | 시스템명 | RFID 출퇴근 관리 시스템 |
-| 목적 | CR100 RFID 리더기(125KHz EM, RS-232)를 이용한 직원 출퇴근 자동 기록 |
+| 목적 | RFID/NFC 리더기를 이용한 직원 출퇴근 자동 기록 |
 | 기술 스택 | 순수 HTML + CSS + JS (프레임워크 없음) |
 | DB | **Supabase** (PostgreSQL) — LocalStorage 완전 대체 완료 |
 | 브라우저 | Chrome 필수 (Web Serial API) |
 | 리더기 1 | **CR100** — 125KHz EM, RS-232, Web Serial API, CP210x 드라이버 |
-| 리더기 2 | **ACR122U** — 13.56MHz NFC, USB PC/SC, 키보드 에뮬레이션 방식 (nfc_reader.py 중계) |
+| 리더기 2 | **ACR122U** — 13.56MHz NFC, USB PC/SC, WebSocket 중계 (nfc_reader.py → ws://localhost:8765) |
+| 배포 | **Cloudflare Pages** — `rfid-attendance.pages.dev` (항상 이 URL로 접속, 해시 URL 사용 금지) |
 
 ---
 
@@ -31,7 +32,7 @@ rfid-attendance/
 ├── js/
 │   ├── config.js           ← Supabase URL + anon key (git 포함)
 │   ├── config.example.js   ← config.js 템플릿
-│   ├── serial.js           ← 카드 리더기 통신 (Web Serial + 키보드 에뮬레이션)
+│   ├── serial.js           ← 카드 리더기 통신 (Web Serial CR100 + WebSocket ACR122U)
 │   ├── storage.js          ← Supabase CRUD 모듈 (모든 DB 접근 담당)
 │   ├── employees.js        ← 직원 데이터 관리 (CRUD)
 │   ├── attendance.js       ← 출퇴근 판별 로직 (출근/퇴근/이미완료)
@@ -154,6 +155,14 @@ rfid-attendance/
 ## 6. Git 커밋 히스토리
 
 ```
+322a034 fix: install_nfc.bat SSL 인증서 오류 수정
+ebe8983 fix: NFC 카드 브라우저 전송 안 되는 문제 수정
+85ae0e8 fix: winscard ctypes 64비트 호환성 수정
+52efbd8 fix: pyscard 의존성 제거 — winscard.dll 직접 호출로 변경
+ea2c497 fix: install_nfc.bat 고정 경로 설치 + PATH 등록
+84eb6d1 fix: install_nfc.bat 한글 인코딩 깨짐 수정
+e78415a fix: 스캔 패널 시계 미표시 및 Serial 초기화 오류 방어 처리
+4ed1a20 feat: ACR122U NFC 리더기 지원 (WebSocket 자동 연결 + 1클릭 설치)
 fde1e3d feat: 이미 출퇴근 완료 시에도 음성안내 추가
 edcf898 feat: 점심/휴게시간 설정, 실 근로시간 계산, 대기화면 시계, 음성안내 추가
 ea8e00b fix: 마이그레이션 like 쿼리 오류 수정
@@ -198,17 +207,32 @@ ea8e00b fix: 마이그레이션 like 쿼리 오류 수정
 
 - `serial.js`가 두 방식을 동시 처리: Web Serial(CR100) + WebSocket(ACR122U)
 - ACR122U 설치: 관리자 페이지 → DB 연결 상태 → [install_nfc.bat 다운로드] → 실행
-- install_nfc.bat이 Python 라이브러리 설치 + Windows 시작프로그램 자동 등록
+- install_nfc.bat: curl로 nfc_reader.py 다운 → websockets 설치 → Windows 시작프로그램 등록
 - 설치 후 PC 부팅 시 `nfc_reader.py` 백그라운드 자동 실행 (pythonw)
 - 헤더에 NFC/COM 뱃지 각각 표시 (연결 상태 실시간 반영)
+- nfc_reader.py는 winscard.dll ctypes 직접 호출 (pyscard 불필요, Python 3.14 호환)
+- 스레드→이벤트루프 통신: asyncio.Queue + loop.call_soon_threadsafe 방식 (run_coroutine_threadsafe 사용 금지)
+- 설치 경로: `%LOCALAPPDATA%\NFC_Reader\nfc_reader.py`
 
 ---
 
-## 10. 향후 고려사항 (미구현)
+## 10. 해결된 주요 이슈 (삽질 기록)
+
+| 이슈 | 원인 | 해결 |
+|------|------|------|
+| pyscard 설치 실패 | Python 3.14에 빌드된 wheel 없음 + MSVC 필요 | winscard.dll ctypes 직접 호출로 대체 |
+| ctypes OverflowError (64비트) | SCARDCONTEXT/HANDLE 타입 미정의 | argtypes/restype 명시 + ULONG_PTR(c_uint64) 사용 |
+| NFC 카드 브라우저 전송 안 됨 | asyncio.run_coroutine_threadsafe가 Python 3.14에서 미작동 | asyncio.Queue + loop.call_soon_threadsafe로 변경 |
+| install_nfc.bat SSL 오류 | 새 Python 설치 시 SSL 인증서 없음 | Python urllib → Windows 내장 curl로 변경 |
+| install_nfc.bat 한글 깨짐 | CMD가 UTF-8 배치파일 처리 못 함 | 영문으로 전면 변경 |
+| 배포 반영 안 됨 | Cloudflare 해시 URL(438d0e73.xxx) 접속 | 프로덕션 URL(rfid-attendance.pages.dev) 사용 |
+
+---
+
+## 11. 향후 고려사항 (미구현)
 
 - 다중 출퇴근 (하루 여러 번 출퇴근 허용)
 - 직원별 개별 근무 설정
 - 실시간 알림 (Supabase Realtime)
 - 모바일 최적화 강화
 - RLS (Row Level Security) 정책 세분화
-- 배포 환경 설정 (Cloudflare Pages 등)
