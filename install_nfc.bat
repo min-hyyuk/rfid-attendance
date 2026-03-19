@@ -10,11 +10,9 @@ echo.
 echo [1/4] Checking Python...
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo.
     echo [ERROR] Python is not installed.
     echo   Download: https://www.python.org/downloads/
     echo   IMPORTANT: Check "Add Python to PATH"!
-    echo.
     start https://www.python.org/downloads/
     pause
     exit /b 1
@@ -22,34 +20,29 @@ if %errorlevel% neq 0 (
 for /f "tokens=*" %%i in ('python --version 2^>^&1') do echo   %%i OK
 echo.
 
-:: -- 2. Install libraries --
-echo [2/4] Installing Python libraries...
-pip install pyscard websockets 2>&1
+:: -- 2. Install websockets (only dependency) --
+echo [2/4] Installing websockets library...
+pip install websockets 2>&1
 echo.
 
-:: -- 3. Copy to fixed location --
+:: -- 3. Create nfc_reader.py at fixed location --
 echo [3/4] Installing NFC Reader...
 set "INSTALL_DIR=%LOCALAPPDATA%\NFC_Reader"
 set "NFC_SCRIPT=%INSTALL_DIR%\nfc_reader.py"
-set "NFC_CMD=%INSTALL_DIR%\nfc_reader.cmd"
 
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 
-:: Copy nfc_reader.py from same folder as this bat file
-set "SOURCE=%~dp0nfc_reader.py"
-if not exist "%SOURCE%" (
-    echo [ERROR] nfc_reader.py not found next to this bat file.
-    echo   Expected: %SOURCE%
+:: Generate nfc_reader.py (embedded - no external file needed)
+python -c "import urllib.request,os; url='https://raw.githubusercontent.com/min-hyyuk/rfid-attendance/main/nfc_reader.py'; dst=os.path.join(os.environ['LOCALAPPDATA'],'NFC_Reader','nfc_reader.py'); urllib.request.urlretrieve(url,dst); print('  Downloaded:', dst)"
+if %errorlevel% neq 0 (
+    echo [ERROR] Failed to download nfc_reader.py
     pause
     exit /b 1
 )
 
-copy /Y "%SOURCE%" "%NFC_SCRIPT%" >nul
-echo   Installed to: %NFC_SCRIPT%
-
-:: Create command wrapper (so user can type "nfc_reader" anywhere)
-echo @pythonw "%%LOCALAPPDATA%%\NFC_Reader\nfc_reader.py" %%* > "%NFC_CMD%"
-echo   Command wrapper: %NFC_CMD%
+:: Create command wrapper
+echo @pythonw "%%LOCALAPPDATA%%\NFC_Reader\nfc_reader.py" %%* > "%INSTALL_DIR%\nfc_reader.cmd"
+echo   Command: nfc_reader
 
 :: Add to user PATH if not already
 echo %PATH% | findstr /I /C:"%INSTALL_DIR%" >nul 2>&1
@@ -96,8 +89,8 @@ echo   Install Complete!
 echo ==================================================
 echo.
 echo   - Auto-start on Windows boot: ON
-echo   - Run manually: nfc_reader (from any terminal)
-echo   - Test now:      python "%NFC_SCRIPT%"
+echo   - Test: python "%NFC_SCRIPT%"
+echo   - After reopen terminal: nfc_reader
 echo.
 echo   Starting NFC server now...
 start "NFC Reader" pythonw "%NFC_SCRIPT%"
