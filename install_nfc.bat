@@ -12,11 +12,8 @@ python --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo.
     echo [ERROR] Python is not installed.
-    echo.
-    echo   Download Python from:
-    echo   https://www.python.org/downloads/
-    echo.
-    echo   IMPORTANT: Check "Add Python to PATH" during install!
+    echo   Download: https://www.python.org/downloads/
+    echo   IMPORTANT: Check "Add Python to PATH"!
     echo.
     start https://www.python.org/downloads/
     pause
@@ -27,31 +24,45 @@ echo.
 
 :: -- 2. Install libraries --
 echo [2/4] Installing Python libraries...
-echo   - pyscard (smart card)
-echo   - websockets (WebSocket server)
-echo.
 pip install pyscard websockets 2>&1
-if %errorlevel% neq 0 (
-    echo.
-    echo [WARNING] Some libraries may have failed to install.
-    echo   If pyscard fails, try:
-    echo   pip install pyscard --only-binary :all:
-    echo.
-)
 echo.
 
-:: -- 3. Check nfc_reader.py --
-echo [3/4] Checking nfc_reader.py...
-set "SCRIPT_DIR=%~dp0"
-set "NFC_SCRIPT=%SCRIPT_DIR%nfc_reader.py"
+:: -- 3. Copy to fixed location --
+echo [3/4] Installing NFC Reader...
+set "INSTALL_DIR=%LOCALAPPDATA%\NFC_Reader"
+set "NFC_SCRIPT=%INSTALL_DIR%\nfc_reader.py"
+set "NFC_CMD=%INSTALL_DIR%\nfc_reader.cmd"
 
-if not exist "%NFC_SCRIPT%" (
-    echo [ERROR] nfc_reader.py not found.
-    echo   Path: %NFC_SCRIPT%
+if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
+
+:: Copy nfc_reader.py from same folder as this bat file
+set "SOURCE=%~dp0nfc_reader.py"
+if not exist "%SOURCE%" (
+    echo [ERROR] nfc_reader.py not found next to this bat file.
+    echo   Expected: %SOURCE%
     pause
     exit /b 1
 )
-echo   Found: %NFC_SCRIPT%
+
+copy /Y "%SOURCE%" "%NFC_SCRIPT%" >nul
+echo   Installed to: %NFC_SCRIPT%
+
+:: Create command wrapper (so user can type "nfc_reader" anywhere)
+echo @pythonw "%%LOCALAPPDATA%%\NFC_Reader\nfc_reader.py" %%* > "%NFC_CMD%"
+echo   Command wrapper: %NFC_CMD%
+
+:: Add to user PATH if not already
+echo %PATH% | findstr /I /C:"%INSTALL_DIR%" >nul 2>&1
+if %errorlevel% neq 0 (
+    for /f "tokens=2*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "USER_PATH=%%B"
+    if defined USER_PATH (
+        setx PATH "%USER_PATH%;%INSTALL_DIR%" >nul 2>&1
+    ) else (
+        setx PATH "%INSTALL_DIR%" >nul 2>&1
+    )
+    set "PATH=%PATH%;%INSTALL_DIR%"
+    echo   Added to PATH
+)
 echo.
 
 :: -- 4. Register Windows Startup --
@@ -64,7 +75,7 @@ echo sLinkFile = "%STARTUP_DIR%\NFC_Reader.lnk" >> "%SHORTCUT_VBS%"
 echo Set oLink = oWS.CreateShortcut(sLinkFile) >> "%SHORTCUT_VBS%"
 echo oLink.TargetPath = "pythonw" >> "%SHORTCUT_VBS%"
 echo oLink.Arguments = """%NFC_SCRIPT%""" >> "%SHORTCUT_VBS%"
-echo oLink.WorkingDirectory = "%SCRIPT_DIR%" >> "%SHORTCUT_VBS%"
+echo oLink.WorkingDirectory = "%INSTALL_DIR%" >> "%SHORTCUT_VBS%"
 echo oLink.Description = "ACR122U NFC Reader WebSocket Server" >> "%SHORTCUT_VBS%"
 echo oLink.WindowStyle = 7 >> "%SHORTCUT_VBS%"
 echo oLink.Save >> "%SHORTCUT_VBS%"
@@ -73,10 +84,9 @@ cscript //nologo "%SHORTCUT_VBS%"
 del "%SHORTCUT_VBS%" >nul 2>&1
 
 if exist "%STARTUP_DIR%\NFC_Reader.lnk" (
-    echo   Startup shortcut created!
-    echo   Path: %STARTUP_DIR%\NFC_Reader.lnk
+    echo   Startup registered!
 ) else (
-    echo   [WARNING] Shortcut creation failed.
+    echo   [WARNING] Startup registration failed.
 )
 echo.
 
@@ -85,12 +95,12 @@ echo ==================================================
 echo   Install Complete!
 echo ==================================================
 echo.
-echo   - NFC server will auto-start on Windows boot.
-echo   - Starting NFC server now...
+echo   - Auto-start on Windows boot: ON
+echo   - Run manually: nfc_reader (from any terminal)
+echo   - Test now:      python "%NFC_SCRIPT%"
 echo.
-
+echo   Starting NFC server now...
 start "NFC Reader" pythonw "%NFC_SCRIPT%"
 echo   NFC server started in background.
-echo   Check "NFC Connected" badge in browser.
 echo.
 pause
