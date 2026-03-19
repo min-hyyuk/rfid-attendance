@@ -83,11 +83,8 @@ const SerialReader = (() => {
   }
 
   function handleNfcCard(cardId) {
-    if (isDuplicate(cardId)) {
-      console.log(`[NFC-WS] 중복 태그 무시: ${cardId}`);
-      return;
-    }
-    recentTags.set(cardId, Date.now());
+    // NFC는 Python 서버에서 3초 중복 방지 → JS 쪽 30초 체크 생략
+    // (직원 등록 시 같은 카드 반복 태그 허용)
     console.log(`[NFC-WS] 카드 감지: ${cardId}`);
     if (onCard) onCard(cardId);
   }

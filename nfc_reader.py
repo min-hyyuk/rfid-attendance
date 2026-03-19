@@ -170,9 +170,12 @@ DUPLICATE_TIMEOUT = 3.0
 
 connected_clients = set()
 reader_name_global = None
+msg_queue = asyncio.Queue()
+_loop = None
 
 
 async def broadcast(message):
+    global connected_clients
     if not connected_clients:
         return
     msg = json.dumps(message, ensure_ascii=False)
@@ -182,7 +185,22 @@ async def broadcast(message):
             await ws.send(msg)
         except Exception:
             dead.add(ws)
-    connected_clients -= dead
+    if dead:
+        connected_clients -= dead
+    print(f"[Broadcast] {message.get('type')} -> {len(connected_clients)} client(s)")
+
+
+async def queue_consumer():
+    """Consume messages from the thread-safe queue and broadcast them."""
+    while True:
+        message = await msg_queue.get()
+        await broadcast(message)
+
+
+def enqueue(message):
+    """Thread-safe: wake up event loop and put message into queue."""
+    if _loop is not None:
+        _loop.call_soon_threadsafe(msg_queue.put_nowait, message)
 
 
 async def ws_handler(websocket):
@@ -203,7 +221,7 @@ async def ws_handler(websocket):
         print(f"[WS] Browser disconnected ({len(connected_clients)})")
 
 
-def card_poll_loop(loop):
+def card_poll_loop():
     global reader_name_global
     hContext = None
     last_uid = None
@@ -226,10 +244,7 @@ def card_poll_loop(loop):
                 print(f"[Reader] Connected: {reader}")
             else:
                 print("[Reader] Not found")
-            asyncio.run_coroutine_threadsafe(
-                broadcast({"type": "status", "reader": reader, "connected": connected}),
-                loop
-            )
+            enqueue({"type": "status", "reader": reader, "connected": connected})
 
         if reader is None:
             time.sleep(2)
@@ -246,19 +261,13 @@ def card_poll_loop(loop):
                     last_uid = uid
                     last_time = now
                     print(f"[Card] {uid}")
-                    asyncio.run_coroutine_threadsafe(
-                        broadcast({"type": "card", "uid": uid}),
-                        loop
-                    )
+                    enqueue({"type": "card", "uid": uid})
         except Exception as e:
             print(f"[Error] {e}")
             scard_release(hContext)
             hContext = None
             reader_name_global = None
-            asyncio.run_coroutine_threadsafe(
-                broadcast({"type": "status", "reader": None, "connected": False}),
-                loop
-            )
+            enqueue({"type": "status", "reader": None, "connected": False})
             time.sleep(2)
             continue
 
@@ -272,8 +281,13 @@ async def main():
     print("=" * 50)
     print()
 
-    loop = asyncio.get_event_loop()
-    poll_thread = threading.Thread(target=card_poll_loop, args=(loop,), daemon=True)
+    global _loop
+    _loop = asyncio.get_running_loop()
+
+    # Start queue consumer (processes messages from poll thread)
+    asyncio.create_task(queue_consumer())
+
+    poll_thread = threading.Thread(target=card_poll_loop, daemon=True)
     poll_thread.start()
 
     print(f"[Server] Waiting for browser (ws://localhost:{WS_PORT})")
