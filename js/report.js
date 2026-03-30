@@ -199,13 +199,29 @@ const Report = (() => {
 
         const adjWs = leave ? (Attendance.getAdjustedWs(empWs, leave) || empWs) : empWs;
         const rec = att[d];
-        const dur  = workDuration(rec?.in, rec?.out);
-        const eMin = rec?.out ? earlyMin(rec.out, adjWs) : 0;
-        let earlyMark = '';
-        if (leave?.type === '조퇴') earlyMark = '<span class="lv-early">▽조</span>';
-        else if (eMin > 0)          earlyMark = '<span class="early">▽</span>';
-        if (dur) return `<td class="dur">${dur}${earlyMark}</td>`;
-        return `<td>${earlyMark}</td>`;
+        if (!rec?.out) return `<td></td>`;
+
+        const outMin  = toMin(rec.out);
+        const endMin  = toMin(adjWs.end);
+        const diffMin = outMin - endMin; // 양수=연장, 음수=조퇴
+
+        // 30분 단위로 반올림 (±30 미만은 표시 안 함)
+        const rounded = Math.round(diffMin / 30) * 30;
+        if (rounded === 0) return `<td></td>`;
+
+        if (leave?.type === '조퇴') {
+          return `<td class="dur"><span class="lv-early">▽조</span></td>`;
+        }
+        if (rounded > 0) {
+          const h = Math.floor(rounded / 60);
+          const m = rounded % 60;
+          return `<td class="dur"><span class="ext-over">▲${h ? h + ':' : ''}${pad2(m)}</span></td>`;
+        } else {
+          const abs = Math.abs(rounded);
+          const h = Math.floor(abs / 60);
+          const m = abs % 60;
+          return `<td class="dur"><span class="early">▽${h ? h + ':' : ''}${pad2(m)}</span></td>`;
+        }
       }).join('');
 
       // 비고 자동 생성
@@ -238,7 +254,7 @@ const Report = (() => {
     const legendHTML = `
       <table class="leg">
         <tr><td>출근 ○ / 지각 ▲ / 결근 ×</td><td>1번줄: 출근기호</td></tr>
-        <tr><td>연장/재외 · 조퇴 ▽</td><td>조퇴 시 시간 기입</td></tr>
+        <tr><td>▲연장 / ▽조퇴 (30분 단위)</td><td>기준 퇴근시간 대비</td></tr>
         <tr><td>休 / 休가</td><td>공휴일·휴무일 / 연차휴가</td></tr>
         <tr><td>半 / ¼</td><td>반차 / 반반차</td></tr>
         <tr><td>▽조</td><td>인가 조퇴</td></tr>
@@ -294,6 +310,7 @@ tr.er td { height: 6.5mm; background: #fafafa; }
 .elb { font-size: 6pt; color: #444; background: #f0f0f0; }
 .dur { font-size: 6pt; color: #222; }
 .early { font-size: 6pt; color: #0055aa; margin-left: 1px; }
+.ext-over { font-size: 6pt; color: #cc4400; font-weight: bold; }
 .sum { font-size: 8pt; font-weight: bold; }
 .sum-sub { font-size: 5.5pt; color: #555; font-weight: normal; display: block; line-height: 1.4; }
 .etc { font-size: 5.5pt; line-height: 1.3; word-break: keep-all; }
