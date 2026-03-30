@@ -249,6 +249,7 @@
           <button class="tab-btn"        data-tab="log">출퇴근 기록 조회</button>
           <button class="tab-btn"        data-tab="report">&#128438; 월 출근부</button>
           <button class="tab-btn"        data-tab="worksettings">&#9881; 근무 설정</button>
+          <button class="tab-btn"        data-tab="leave">&#127796; 휴가 관리</button>
         </div>
 
         <!-- 탭 1: 직원 등록 -->
@@ -422,6 +423,54 @@
           </div>
         </div><!-- /tab-worksettings -->
 
+        <!-- 탭 5: 휴가 관리 -->
+        <div class="tab-panel" id="tab-leave">
+          <div class="form-box" style="margin-top:0;">
+            <h3 class="form-box-title">&#127796; 휴가 / 휴무 등록</h3>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="lvEmployee">직원</label>
+                <select id="lvEmployee"><option value="">선택</option></select>
+              </div>
+              <div class="form-group">
+                <label for="lvType">유형</label>
+                <select id="lvType">
+                  <option value="휴가">휴가 (종일)</option>
+                  <option value="반차">반차 (반일)</option>
+                  <option value="반반차">반반차 (1/4일)</option>
+                  <option value="조퇴">조퇴 (인가)</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="lvStartDate">시작일</label>
+                <input type="date" id="lvStartDate">
+              </div>
+              <div class="form-group">
+                <label for="lvEndDate">종료일</label>
+                <input type="date" id="lvEndDate">
+              </div>
+              <div class="form-group">
+                <label for="lvNote">비고</label>
+                <input type="text" id="lvNote" placeholder="사유 (선택)">
+              </div>
+              <div class="form-group" style="justify-content:flex-end; min-width:auto;">
+                <button class="btn btn-primary" id="addLeaveBtn">등록하기</button>
+              </div>
+            </div>
+            <div id="leaveFormAlert" style="margin-top:10px;"></div>
+          </div>
+
+          <div>
+            <div class="list-header">
+              <h3>휴가 내역</h3>
+              <span id="leaveCount" class="count-label"></span>
+            </div>
+            <div id="leaveTableWrap"></div>
+          </div>
+        </div><!-- /tab-leave -->
+
       </div>
     </div>
   </div>
@@ -444,10 +493,62 @@
       <label for="editHireDate">입사일</label>
       <input type="date" id="editHireDate">
     </div>
-    <div class="form-group" style="margin-bottom:18px;">
+    <div class="form-group" style="margin-bottom:12px;">
       <label for="editLeaveDate">퇴사일</label>
       <input type="date" id="editLeaveDate">
     </div>
+
+    <!-- 개인 근무설정 -->
+    <div style="margin:12px 0; border-top:1px solid var(--gray-200); padding-top:12px;">
+      <label style="display:flex; align-items:center; gap:6px; font-size:.8125rem; font-weight:600; cursor:pointer;">
+        <input type="checkbox" id="editUsePersonalWs"> 개별 근무 설정 사용
+      </label>
+      <div id="editPersonalWsArea" style="display:none; margin-top:10px;">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="editWsStart">출근 시간</label>
+            <input type="time" id="editWsStart">
+          </div>
+          <div class="form-group">
+            <label for="editWsEnd">퇴근 시간</label>
+            <input type="time" id="editWsEnd">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="editWsLateMin">지각 허용 (분)</label>
+            <input type="number" id="editWsLateMin" min="0" max="120" style="width:80px;">
+          </div>
+          <div class="form-group">
+            <label for="editWsEarlyMin">조퇴 허용 (분)</label>
+            <input type="number" id="editWsEarlyMin" min="0" max="120" style="width:80px;">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="editWsLunchStart">점심 시작</label>
+            <input type="time" id="editWsLunchStart">
+          </div>
+          <div class="form-group">
+            <label for="editWsLunchEnd">점심 종료</label>
+            <input type="time" id="editWsLunchEnd">
+          </div>
+        </div>
+        <div style="margin-top:8px;">
+          <label style="font-size:.75rem; font-weight:600; color:var(--gray-600); display:block; margin-bottom:6px;">근무 요일</label>
+          <div class="workday-checks">
+            <label><input type="checkbox" class="edit-wd-check" value="1"> 월</label>
+            <label><input type="checkbox" class="edit-wd-check" value="2"> 화</label>
+            <label><input type="checkbox" class="edit-wd-check" value="3"> 수</label>
+            <label><input type="checkbox" class="edit-wd-check" value="4"> 목</label>
+            <label><input type="checkbox" class="edit-wd-check" value="5"> 금</label>
+            <label><input type="checkbox" class="edit-wd-check" value="6"> 토</label>
+            <label><input type="checkbox" class="edit-wd-check" value="0"> 일</label>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div id="editAlert" style="margin-bottom:10px;"></div>
     <div style="display:flex; gap:8px; justify-content:flex-end;">
       <button class="btn btn-secondary" id="editCancelBtn">취소</button>
@@ -687,26 +788,28 @@ function showScanResult(result) {
 
   } else if (result.type === '출근') {
     panel.classList.add('scan-in');
-    const lateNote = result.lateMin > 0
+    const lateNote  = result.lateMin > 0
       ? `<div class="scan-late">&#9651; 지각 ${result.lateMin}분</div>` : '';
+    const leaveBadge = result.leaveType ? `<div class="scan-leave-badge">${result.leaveType}</div>` : '';
     panel.innerHTML = `
       <div class="scan-icon">&#9989;</div>
       <div class="scan-type">출근${result.lateMin > 0 ? ' (지각)' : ''}</div>
       <div class="scan-name">${result.employee.name}</div>
       <div class="scan-time">${result.employee.dept ? result.employee.dept + '&nbsp;&nbsp;·&nbsp;&nbsp;' : ''}${result.timeStr}</div>
-      ${lateNote}`;
+      ${lateNote}${leaveBadge}`;
     speakResult(result.employee.name, '출근');
 
   } else if (result.type === '퇴근') {
     panel.classList.add('scan-out');
     const earlyNote = result.earlyLeaveMin > 0
       ? `<div class="scan-late" style="color:#0055aa;">&#9661; 조퇴 ${result.earlyLeaveMin}분</div>` : '';
+    const leaveBadge = result.leaveType ? `<div class="scan-leave-badge">${result.leaveType}</div>` : '';
     panel.innerHTML = `
       <div class="scan-icon">&#128075;</div>
       <div class="scan-type">퇴근${result.earlyLeaveMin > 0 ? ' (조퇴)' : ''}</div>
       <div class="scan-name">${result.employee.name}</div>
       <div class="scan-time">${result.employee.dept ? result.employee.dept + '&nbsp;&nbsp;·&nbsp;&nbsp;' : ''}${result.timeStr}</div>
-      ${earlyNote}`;
+      ${earlyNote}${leaveBadge}`;
     speakResult(result.employee.name, '퇴근');
   }
 
@@ -732,13 +835,15 @@ async function renderRightPanel(flashEmpId = null) {
     present: statuses.filter(s => s.status === 'present').length,
     left:    statuses.filter(s => s.status === 'left').length,
     absent:  statuses.filter(s => s.status === 'absent').length,
+    leave:   statuses.filter(s => s.status === 'leave').length,
   };
 
   document.getElementById('epTotal').textContent = `총 ${summary.total}명`;
   document.getElementById('epStats').innerHTML = `
     <span class="ep-stat present">&#9679; 근무중 ${summary.present}</span>
     <span class="ep-stat left">&#9679; 퇴근 ${summary.left}</span>
-    <span class="ep-stat absent">&#9675; 미출근 ${summary.absent}</span>`;
+    <span class="ep-stat absent">&#9675; 미출근 ${summary.absent}</span>
+    ${summary.leave > 0 ? `<span class="ep-stat leave">&#127796; 휴가 ${summary.leave}</span>` : ''}`;
 
   const listEl = document.getElementById('empList');
   if (statuses.length === 0) {
@@ -747,18 +852,19 @@ async function renderRightPanel(flashEmpId = null) {
     return;
   }
 
-  const order = { present: 0, left: 1, absent: 2 };
+  const order = { present: 0, leave: 1, left: 2, absent: 3 };
   statuses.sort((a, b) => order[a.status] - order[b.status]);
 
   listEl.innerHTML = statuses.map(s => {
-    const icon     = { present: '&#9679;', left: '&#9679;', absent: '&#9675;' };
-    const lateTag  = s.lateMin > 0       ? `<span class="ei-badge late">지각</span>` : '';
+    const icon     = { present: '&#9679;', left: '&#9679;', absent: '&#9675;', leave: '&#127796;' };
+    const lateTag  = s.lateMin > 0        ? `<span class="ei-badge late">지각</span>` : '';
     const earlyTag = s.earlyLeaveMin > 0  ? `<span class="ei-badge early">조퇴</span>` : '';
+    const leaveTag = s.leaveType          ? `<span class="ei-badge leave">${s.leaveType}</span>` : '';
     return `
     <div class="emp-item ${s.status}" id="ei-${s.employee.id}">
       <div class="ei-dot ${s.status}">${icon[s.status]}</div>
       <div class="ei-info">
-        <div class="ei-name">${s.employee.name}${lateTag}${earlyTag}</div>
+        <div class="ei-name">${s.employee.name}${lateTag}${earlyTag}${leaveTag}</div>
         ${s.employee.dept ? `<div class="ei-dept">${s.employee.dept}</div>` : ''}
       </div>
       <div class="ei-times">
@@ -882,8 +988,46 @@ async function openEditModal(id) {
   document.getElementById('editHireDate').value  = emp.hire_date  || '';
   document.getElementById('editLeaveDate').value = emp.leave_date || '';
   document.getElementById('editAlert').innerHTML = '';
+
+  // 개인 근무설정 로드
+  const usePersonal = document.getElementById('editUsePersonalWs');
+  const wsArea      = document.getElementById('editPersonalWsArea');
+  if (emp.work_settings) {
+    usePersonal.checked = true;
+    wsArea.style.display = '';
+    const ws = emp.work_settings;
+    document.getElementById('editWsStart').value     = ws.start || '09:00';
+    document.getElementById('editWsEnd').value       = ws.end   || '18:00';
+    document.getElementById('editWsLateMin').value   = ws.late_min ?? 0;
+    document.getElementById('editWsEarlyMin').value  = ws.early_min ?? 0;
+    document.getElementById('editWsLunchStart').value = ws.lunch?.start || '12:00';
+    document.getElementById('editWsLunchEnd').value   = ws.lunch?.end   || '13:00';
+    document.querySelectorAll('.edit-wd-check').forEach(cb => {
+      cb.checked = (ws.work_days || [1,2,3,4,5]).includes(Number(cb.value));
+    });
+  } else {
+    usePersonal.checked = false;
+    wsArea.style.display = 'none';
+    // 부서 기본값으로 초기화
+    const deptWs = IS_DEPT_MODE ? await Storage.getDeptWorkSettings(currentDept.id) : {};
+    document.getElementById('editWsStart').value     = deptWs.start || '09:00';
+    document.getElementById('editWsEnd').value       = deptWs.end   || '18:00';
+    document.getElementById('editWsLateMin').value   = deptWs.late_min ?? 0;
+    document.getElementById('editWsEarlyMin').value  = deptWs.early_min ?? 0;
+    document.getElementById('editWsLunchStart').value = deptWs.lunch?.start || '12:00';
+    document.getElementById('editWsLunchEnd').value   = deptWs.lunch?.end   || '13:00';
+    document.querySelectorAll('.edit-wd-check').forEach(cb => {
+      cb.checked = (deptWs.work_days || [1,2,3,4,5]).includes(Number(cb.value));
+    });
+  }
+
   document.getElementById('editModal').hidden = false;
 }
+
+// 개인 근무설정 체크박스 토글
+document.getElementById('editUsePersonalWs').addEventListener('change', function() {
+  document.getElementById('editPersonalWsArea').style.display = this.checked ? '' : 'none';
+});
 
 document.getElementById('editCancelBtn').addEventListener('click', () => {
   document.getElementById('editModal').hidden = true;
@@ -904,7 +1048,22 @@ document.getElementById('editSaveBtn').addEventListener('click', async () => {
 
   try {
     const updates = { name, hire_date: hireDate || null, leave_date: leaveDate || null };
-    if (cardId) updates.card_id = cardId;  // 새 카드 입력 시에만 변경 (해싱은 Employees.update에서 처리)
+    if (cardId) updates.card_id = cardId;
+    // 개인 근무설정
+    if (document.getElementById('editUsePersonalWs').checked) {
+      updates.work_settings = {
+        start:     document.getElementById('editWsStart').value || '09:00',
+        end:       document.getElementById('editWsEnd').value   || '18:00',
+        late_min:  parseInt(document.getElementById('editWsLateMin').value) || 0,
+        early_min: parseInt(document.getElementById('editWsEarlyMin').value) || 0,
+        lunch:     { start: document.getElementById('editWsLunchStart').value || '12:00',
+                     end:   document.getElementById('editWsLunchEnd').value   || '13:00' },
+        work_days: [...document.querySelectorAll('.edit-wd-check:checked')].map(cb => Number(cb.value)),
+        breaks:    [],
+      };
+    } else {
+      updates.work_settings = null;
+    }
     await Employees.update(id, updates);
     document.getElementById('editModal').hidden = true;
     await renderEmpTable();
@@ -973,7 +1132,7 @@ function renderLogTable(rows) {
     <div class="data-table-wrap">
       <table class="data-table">
         <thead><tr><th>날짜</th><th>이름</th><th>출근</th><th>퇴근</th>
-            <th>근무시간</th><th>지각</th><th>조퇴</th><th>동기화</th></tr></thead>
+            <th>근무시간</th><th>지각</th><th>조퇴</th><th>휴가</th></tr></thead>
         <tbody>
           ${rows.map(r => `
             <tr>
@@ -984,8 +1143,7 @@ function renderLogTable(rows) {
               <td>${r.duration || '-'}</td>
               <td>${r.lateMin       > 0 ? `<span style="color:#cc4400;">▲ ${r.lateMin}분</span>`       : '-'}</td>
               <td>${r.earlyLeaveMin > 0 ? `<span style="color:#0055aa;">▽ ${r.earlyLeaveMin}분</span>` : '-'}</td>
-              <td><span class="status-pill ${r.synced ? 'status-left' : 'status-absent'}">
-                    ${r.synced ? '동기화됨' : '미동기화'}</span></td>
+              <td>${r.leaveType ? `<span class="status-pill" style="background:#e0f2fe; color:#0055aa;">${r.leaveType}</span>` : '-'}</td>
             </tr>`).join('')}
         </tbody>
       </table>
@@ -1324,6 +1482,132 @@ function showAlert(el, msg, type) {
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   17-1. 휴가 관리 탭
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+async function refreshLeaveEmpSelect() {
+  const sel = document.getElementById('lvEmployee');
+  if (!sel) return;
+  const list = IS_DEPT_MODE
+    ? (await Employees.getAll()).filter(e => e.dept === currentDept.name)
+    : await Employees.getAll();
+  sel.innerHTML = '<option value="">선택</option>' +
+    list.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
+}
+
+async function generateLeaveId() {
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const prefix = 'LEV' + today;
+  const existing = await Storage.getLeavesByDateRange('2020-01-01', '2099-12-31');
+  let maxNum = 0;
+  existing.forEach(l => {
+    if (l.id.startsWith(prefix)) {
+      const num = parseInt(l.id.slice(prefix.length), 10);
+      if (num > maxNum) maxNum = num;
+    }
+  });
+  return `${prefix}${String(maxNum + 1).padStart(3, '0')}`;
+}
+
+async function renderLeaveTable() {
+  const wrap    = document.getElementById('leaveTableWrap');
+  const countEl = document.getElementById('leaveCount');
+  if (!wrap) return;
+
+  // 현재 월 기준 조회
+  const now   = new Date();
+  const year  = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const days  = new Date(year, now.getMonth() + 1, 0).getDate();
+  const start = `${year}-${month}-01`;
+  const end   = `${year}-${month}-${String(days).padStart(2, '0')}`;
+
+  let leaves = await Storage.getLeavesByDateRange(start, end);
+  // 부서 필터
+  if (IS_DEPT_MODE) {
+    const deptEmps = new Set(
+      (await Employees.getAll()).filter(e => e.dept === currentDept.name).map(e => e.id)
+    );
+    leaves = leaves.filter(l => deptEmps.has(l.emp_id));
+  }
+
+  countEl.textContent = `${year}년 ${parseInt(month)}월 — ${leaves.length}건`;
+
+  if (leaves.length === 0) {
+    wrap.innerHTML = '<p class="empty-msg">등록된 휴가가 없습니다.</p>';
+    return;
+  }
+
+  // 직원 이름 맵
+  const allEmps = await Employees.getAll();
+  const nameMap = {};
+  allEmps.forEach(e => { nameMap[e.id] = e.name; });
+
+  wrap.innerHTML = `
+    <div class="data-table-wrap">
+      <table class="data-table">
+        <thead><tr><th>날짜</th><th>이름</th><th>유형</th><th>비고</th><th style="width:60px;">삭제</th></tr></thead>
+        <tbody>
+          ${leaves.map(l => `
+            <tr>
+              <td>${l.date}</td>
+              <td style="font-weight:600;">${nameMap[l.emp_id] || l.emp_id}</td>
+              <td><span class="status-pill" style="background:${l.type === '휴가' ? '#fee2e2; color:#cc0000' : l.type === '반차' ? '#e0f2fe; color:#0055aa' : l.type === '반반차' ? '#f3e8ff; color:#7733aa' : '#e0f2fe; color:#0055aa'}">${l.type}</span></td>
+              <td style="font-size:.8125rem; color:var(--gray-500);">${l.note || '-'}</td>
+              <td><button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="deleteLeave('${l.id}')">삭제</button></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+async function deleteLeave(id) {
+  if (!confirm('이 휴가 기록을 삭제하시겠습니까?')) return;
+  await Storage.removeLeave(id);
+  await renderLeaveTable();
+}
+
+if (IS_DEPT_MODE) {
+  document.getElementById('addLeaveBtn').addEventListener('click', async () => {
+    const empId    = document.getElementById('lvEmployee').value;
+    const type     = document.getElementById('lvType').value;
+    const startStr = document.getElementById('lvStartDate').value;
+    const endStr   = document.getElementById('lvEndDate').value;
+    const note     = document.getElementById('lvNote').value.trim();
+    const alertEl  = document.getElementById('leaveFormAlert');
+
+    if (!empId)    return showAlert(alertEl, '직원을 선택하세요.', 'danger');
+    if (!startStr) return showAlert(alertEl, '시작일을 입력하세요.', 'danger');
+
+    const end = endStr || startStr;
+    if (startStr > end) return showAlert(alertEl, '시작일이 종료일보다 늦습니다.', 'danger');
+
+    try {
+      // 날짜 범위 내 각 날짜에 대해 leave 생성
+      let count = 0;
+      const cur = new Date(startStr);
+      const endD = new Date(end);
+      while (cur <= endD) {
+        const dateStr = cur.toISOString().slice(0, 10);
+        const id = await generateLeaveId();
+        await Storage.addLeave({
+          id, emp_id: empId, date: dateStr, type, note,
+          created_at: new Date().toISOString(),
+        });
+        count++;
+        cur.setDate(cur.getDate() + 1);
+      }
+      showAlert(alertEl, `${count}건의 ${type}가 등록되었습니다.`, 'success');
+      document.getElementById('lvNote').value = '';
+      await renderLeaveTable();
+    } catch (e) { showAlert(alertEl, e.message, 'danger'); }
+  });
+
+  // 휴가 시작일 기본값
+  const lvStart = document.getElementById('lvStartDate');
+  if (lvStart) lvStart.value = new Date().toISOString().slice(0, 10);
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    18. 비동기 초기화
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 (async () => {
@@ -1394,6 +1678,8 @@ function showAlert(el, msg, type) {
   initReportTab();
 
   if (IS_DEPT_MODE) {
+    await refreshLeaveEmpSelect();
+    await renderLeaveTable();
     const initSec = location.hash.slice(1) || 'attendance';
     await navigate(initSec);
   } else {

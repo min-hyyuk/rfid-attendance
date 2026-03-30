@@ -201,6 +201,55 @@ const Storage = (() => {
       );
     },
 
+    // ── 개인 근무 설정 ────────────────────────────────────
+
+    /** 직원 개인 ws가 있으면 그것, 없으면 부서 ws 반환 */
+    async getEffectiveWorkSettings(emp, deptWs) {
+      if (emp?.work_settings) {
+        return { ...DEFAULT_WS, ...emp.work_settings };
+      }
+      return deptWs ? { ...DEFAULT_WS, ...deptWs } : { ...DEFAULT_WS };
+    },
+
+    // ── 휴가 관리 ──────────────────────────────────────
+
+    async getLeavesByDateRange(startDate, endDate) {
+      return _unwrap(
+        await _db.from('leaves').select('*')
+          .gte('date', startDate).lte('date', endDate).order('date'),
+        []
+      );
+    },
+
+    async getLeavesByEmpAndDate(empId, date) {
+      const { data, error } = await _db
+        .from('leaves').select('*').eq('emp_id', empId).eq('date', date).maybeSingle();
+      if (error) throw new Error(error.message);
+      return data;
+    },
+
+    async addLeave(leave) {
+      const { data, error } = await _db
+        .from('leaves').insert(leave).select().single();
+      if (error) {
+        if (error.code === '23505') throw new Error('해당 날짜에 이미 휴가가 등록되어 있습니다.');
+        throw new Error(error.message);
+      }
+      return data;
+    },
+
+    async removeLeave(id) {
+      return _unwrap(await _db.from('leaves').delete().eq('id', id));
+    },
+
+    /** 기간 내 휴가를 { "EMP001_2026-03-30": leave } 맵으로 반환 */
+    async getLeaveMap(startDate, endDate) {
+      const leaves = await this.getLeavesByDateRange(startDate, endDate);
+      const map = {};
+      leaves.forEach(l => { map[`${l.emp_id}_${l.date}`] = l; });
+      return map;
+    },
+
     // ── 연휴 / 휴무일 ────────────────────────────────────
 
     async getHolidays() {
@@ -235,6 +284,7 @@ const Storage = (() => {
         _db.from('employees').delete().neq('id', ''),
         _db.from('departments').delete().neq('id', ''),
         _db.from('holidays').delete().neq('date', ''),
+        _db.from('leaves').delete().neq('id', ''),
         _db.from('settings').delete().neq('key', ''),
       ]);
     },

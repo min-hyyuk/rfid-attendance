@@ -4,8 +4,9 @@
  * 원본 양식 재현 + 확장:
  *  - A4 가로 / 직원 1명당 2행 (출근행 + 연장/재외행)
  *  - 부서 필터: 특정 부서만 출력 가능
- *  - 부서별 근무 설정(ws) 적용: 비근무요일, 지각▲, 조퇴▽, 결근×
+ *  - 부서별/개인별 근무 설정(ws) 적용: 비근무요일, 지각▲, 조퇴▽, 결근×
  *  - 공휴일/휴무일 休, 입사 전/퇴사 후 빗금
+ *  - 휴가/반차/반반차/조퇴 기호 및 비고 자동 기재
  *
  * 사용: Report.print(2026, 10, '작업장명', 'DEPT001', ws)
  */
@@ -66,6 +67,12 @@ const Report = (() => {
     return true;
   }
 
+  /** 직원별 유효 ws 반환 */
+  function getEmpWs(emp, deptWs) {
+    if (emp.work_settings) return { ...DEFAULT_WS, ...emp.work_settings };
+    return deptWs;
+  }
+
   /* ── 데이터 구성 ────────────────────────────────────────── */
   function buildAttMap(employees, logs) {
     const map = {};
@@ -81,33 +88,37 @@ const Report = (() => {
     return map;
   }
 
-  function calcSummary(emp, attMap, y, m, ws, holidays) {
+  function calcSummary(emp, attMap, y, m, ws, holidays, leaveMap) {
     const days = daysInMonth(y, m);
     let worked = 0, absent = 0, late = 0, earlyLeave = 0;
+    let leaveCount = 0, halfCount = 0, quarterCount = 0, earlyAuth = 0;
     for (let d = 1; d <= days; d++) {
       if (!isActive(emp, y, m, d)) continue;
       if (isOffDay(y, m, d, ws))   continue;
       if (isHoliday(y, m, d, holidays)) continue;
+
+      const leave = leaveMap[`${emp.id}_${ds(y, m, d)}`];
+      if (leave) {
+        if (leave.type === '휴가')   { leaveCount++; continue; }
+        if (leave.type === '반차')   halfCount++;
+        if (leave.type === '반반차') quarterCount++;
+        if (leave.type === '조퇴')   earlyAuth++;
+      }
+
+      const adjWs = leave ? (Attendance.getAdjustedWs(ws, leave) || ws) : ws;
       const rec = (attMap[emp.id] || {})[d];
       if (rec?.in) {
         worked++;
-        if (lateMin(rec.in, ws) > 0)             late++;
-        if (rec.out && earlyMin(rec.out, ws) > 0) earlyLeave++;
+        if (lateMin(rec.in, adjWs) > 0)              late++;
+        if (rec.out && earlyMin(rec.out, adjWs) > 0)  earlyLeave++;
       } else {
         absent++;
       }
     }
-    return { worked, absent, late, earlyLeave };
+    return { worked, absent, late, earlyLeave, leaveCount, halfCount, quarterCount, earlyAuth };
   }
 
   /* ── HTML 생성 ──────────────────────────────────────────── */
-  /**
-   * @param {number} year
-   * @param {number} month
-   * @param {string} companyName
-   * @param {string|null} deptFilter  부서명 필터 (null = 전체)
-   * @param {object|null} ws          부서 근무 설정 (null = 기본값)
-   */
   async function generateHTML(year, month, companyName, deptFilter = null, ws = null) {
     const effectiveWs = ws ? { ...DEFAULT_WS, ...ws } : DEFAULT_WS;
     const days        = daysInMonth(year, month);
@@ -115,14 +126,18 @@ const Report = (() => {
     const startDate   = `${year}-${padMonth}-01`;
     const endDate     = `${year}-${padMonth}-${pad2(days)}`;
 
-    let [employees, logs, allHolidays] = await Promise.all([
+    let [employees, logs, allHolidays, leaveMap] = await Promise.all([
       Employees.getAll(),
       Storage.getLogsByDateRange(startDate, endDate),
       Storage.getHolidays(),
+      Storage.getLeaveMap(startDate, endDate),
     ]);
     if (deptFilter) employees = employees.filter(e => e.dept === deptFilter);
     const holidays = allHolidays.filter(h => h.date >= startDate && h.date <= endDate);
     const attMap   = buildAttMap(employees, logs);
+
+    // 전체 요약 집계
+    let totalLeave = 0, totalLate = 0, totalAbsent = 0, totalEarly = 0;
 
     /* 날짜 헤더 */
     const dayHeaders = Array.from({length: 31}, (_, i) => {
@@ -136,7 +151,13 @@ const Report = (() => {
     /* 직원 행 */
     const empRows = employees.map((emp, idx) => {
       const att     = attMap[emp.id] || {};
-      const summary = calcSummary(emp, attMap, year, month, effectiveWs, holidays);
+      const empWs   = getEmpWs(emp, effectiveWs);
+      const summary = calcSummary(emp, attMap, year, month, empWs, holidays, leaveMap);
+
+      totalLeave  += summary.leaveCount;
+      totalLate   += summary.late;
+      totalAbsent += summary.absent;
+      totalEarly  += summary.earlyLeave;
 
       const dayCells = Array.from({length: 31}, (_, i) => {
         const d = i + 1;
@@ -144,11 +165,24 @@ const Report = (() => {
         if (!isActive(emp, year, month, d)) return `<td class="nohire"></td>`;
         if (isHoliday(year, month, d, holidays))
           return `<td class="holiday"><span class="hol">${holidayName(year, month, d, holidays)}</span></td>`;
-        if (isOffDay(year, month, d, effectiveWs)) return `<td class="wk"></td>`;
+        if (isOffDay(year, month, d, empWs)) return `<td class="wk"></td>`;
+
+        const leave = leaveMap[`${emp.id}_${ds(year, month, d)}`];
+        if (leave?.type === '휴가') return `<td class="holiday"><span class="lv-full">休가</span></td>`;
+
+        const adjWs = leave ? (Attendance.getAdjustedWs(empWs, leave) || empWs) : empWs;
         const rec = att[d];
         if (rec?.in) {
-          const isLate = lateMin(rec.in, effectiveWs) > 0;
-          return `<td class="att"><span class="chk${isLate ? ' late' : ''}">${isLate ? '▲' : '○'}</span><span class="tin">${rec.in}</span></td>`;
+          const isLate = lateMin(rec.in, adjWs) > 0;
+          let badge = '';
+          if (leave?.type === '반차')   badge = '<span class="lv-half">半</span>';
+          if (leave?.type === '반반차') badge = '<span class="lv-qtr">¼</span>';
+          return `<td class="att">${badge}<span class="chk${isLate ? ' late' : ''}">${isLate ? '▲' : '○'}</span><span class="tin">${rec.in}</span></td>`;
+        }
+        if (leave) {
+          if (leave.type === '반차')   return `<td class="att"><span class="lv-half">半</span></td>`;
+          if (leave.type === '반반차') return `<td class="att"><span class="lv-qtr">¼</span></td>`;
+          if (leave.type === '조퇴')   return `<td class="abs">×</td>`;
         }
         return `<td class="abs">×</td>`;
       }).join('');
@@ -158,13 +192,29 @@ const Report = (() => {
         if (d > days) return `<td class="noday"></td>`;
         if (!isActive(emp, year, month, d)) return `<td class="nohire"></td>`;
         if (isHoliday(year, month, d, holidays)) return `<td class="holiday"></td>`;
-        if (isOffDay(year, month, d, effectiveWs)) return `<td class="wk"></td>`;
+        if (isOffDay(year, month, d, empWs)) return `<td class="wk"></td>`;
+
+        const leave = leaveMap[`${emp.id}_${ds(year, month, d)}`];
+        if (leave?.type === '휴가') return `<td class="holiday"></td>`;
+
+        const adjWs = leave ? (Attendance.getAdjustedWs(empWs, leave) || empWs) : empWs;
         const rec = att[d];
         const dur  = workDuration(rec?.in, rec?.out);
-        const eMin = rec?.out ? earlyMin(rec.out, effectiveWs) : 0;
-        if (dur) return `<td class="dur">${dur}${eMin > 0 ? '<span class="early">▽</span>' : ''}</td>`;
-        return `<td></td>`;
+        const eMin = rec?.out ? earlyMin(rec.out, adjWs) : 0;
+        let earlyMark = '';
+        if (leave?.type === '조퇴') earlyMark = '<span class="lv-early">▽조</span>';
+        else if (eMin > 0)          earlyMark = '<span class="early">▽</span>';
+        if (dur) return `<td class="dur">${dur}${earlyMark}</td>`;
+        return `<td>${earlyMark}</td>`;
       }).join('');
+
+      // 비고 자동 생성
+      const remarks = [];
+      if (summary.leaveCount > 0)  remarks.push(`휴가${summary.leaveCount}`);
+      if (summary.halfCount > 0)   remarks.push(`반차${summary.halfCount}`);
+      if (summary.quarterCount > 0) remarks.push(`반반차${summary.quarterCount}`);
+      if (summary.earlyAuth > 0)   remarks.push(`조퇴${summary.earlyAuth}`);
+      const remarkStr = remarks.join(', ');
 
       const sumWorked = `${summary.worked}${summary.late      > 0 ? `<br><span class="sum-sub">지각:${summary.late}</span>`      : ''}`;
       const sumAbsent = `${summary.absent}${summary.earlyLeave > 0 ? `<br><span class="sum-sub">조퇴:${summary.earlyLeave}</span>` : ''}`;
@@ -176,7 +226,7 @@ const Report = (() => {
           ${dayCells}
           <td rowspan="2" class="sum">${sumWorked}</td>
           <td rowspan="2" class="sum">${sumAbsent}</td>
-          <td rowspan="2" class="etc"></td>
+          <td rowspan="2" class="etc">${remarkStr}</td>
           <td rowspan="2" class="sig"></td>
         </tr>
         <tr class="er">
@@ -189,8 +239,10 @@ const Report = (() => {
       <table class="leg">
         <tr><td>출근 ○ / 지각 ▲ / 결근 ×</td><td>1번줄: 출근기호</td></tr>
         <tr><td>연장/재외 · 조퇴 ▽</td><td>조퇴 시 시간 기입</td></tr>
-        <tr><td>休</td><td>공휴일 / 휴무일</td></tr>
-        <tr><td>비고</td><td>월차사용일/퇴직사유</td></tr>
+        <tr><td>休 / 休가</td><td>공휴일·휴무일 / 연차휴가</td></tr>
+        <tr><td>半 / ¼</td><td>반차 / 반반차</td></tr>
+        <tr><td>▽조</td><td>인가 조퇴</td></tr>
+        <tr><td>비고</td><td>휴가·반차 사용 내역</td></tr>
         <tr><td>근로자서명</td><td>근로자 최종 서명</td></tr>
       </table>`;
 
@@ -217,7 +269,7 @@ body  { font-family: 'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo',sans-
 table.main { width: 100%; border-collapse: collapse; table-layout: fixed; }
 table.main th, table.main td { border: 1px solid #555; text-align: center; vertical-align: middle; overflow: hidden; padding: 0; }
 .c-no  { width: 6mm; } .c-nm { width: 22mm; } .c-d { width: 7.1mm; }
-.c-sum { width: 9mm; } .c-etc { width: 9mm; } .c-sig { width: 10mm; }
+.c-sum { width: 9mm; } .c-etc { width: 12mm; } .c-sig { width: 10mm; }
 thead th { background: #e4e4e4; font-size: 6.5pt; font-weight: bold; height: 10mm; line-height: 1.3; }
 thead th em { font-style: normal; font-size: 5.5pt; display: block; }
 .wk    { background: #c0c0c0 !important; }
@@ -225,6 +277,10 @@ thead th em { font-style: normal; font-size: 5.5pt; display: block; }
 .nohire { background: repeating-linear-gradient(45deg, #ddd, #ddd 2px, #ebebeb 2px, #ebebeb 8px); border-color: #bbb; }
 .holiday { background: #fff0f0 !important; }
 .hol { font-size: 6.5pt; font-weight: bold; color: #cc0000; display: block; line-height: 1.3; }
+.lv-full { font-size: 6pt; font-weight: bold; color: #cc0000; display: block; line-height: 1.3; }
+.lv-half { font-size: 5.5pt; font-weight: bold; color: #0055aa; display: block; line-height: 1; }
+.lv-qtr  { font-size: 6pt; font-weight: bold; color: #7733aa; display: block; line-height: 1; }
+.lv-early { font-size: 6pt; color: #0055aa; margin-left: 1px; }
 tr.mr td { height: 11mm; }
 .no { font-size: 6.5pt; }
 .nm { font-size: 8pt; font-weight: bold; text-align: left; padding-left: 2px; line-height: 1.3; }
@@ -240,6 +296,7 @@ tr.er td { height: 6.5mm; background: #fafafa; }
 .early { font-size: 6pt; color: #0055aa; margin-left: 1px; }
 .sum { font-size: 8pt; font-weight: bold; }
 .sum-sub { font-size: 5.5pt; color: #555; font-weight: normal; display: block; line-height: 1.4; }
+.etc { font-size: 5.5pt; line-height: 1.3; word-break: keep-all; }
 tr.mr, tr.er { page-break-inside: avoid; }
 @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } .no-print { display: none; } }
 </style>
@@ -260,8 +317,8 @@ tr.mr, tr.er { page-break-inside: avoid; }
       <td style="padding-left:16px;">총인원수</td><td><span class="box">${employees.length}명</span></td>
       <td style="padding-left:6px;">인원MD</td><td><span class="box"></span></td>
     </tr>
-    <tr><td colspan="5"></td><td style="padding-left:16px;">휴가</td><td><span class="box"></span></td><td style="padding-left:6px;">결근</td><td><span class="box"></span></td></tr>
-    <tr><td colspan="5"></td><td style="padding-left:16px;">지각</td><td><span class="box"></span></td><td style="padding-left:6px;">조퇴</td><td><span class="box"></span></td></tr>
+    <tr><td colspan="5"></td><td style="padding-left:16px;">휴가</td><td><span class="box">${totalLeave || ''}</span></td><td style="padding-left:6px;">결근</td><td><span class="box">${totalAbsent || ''}</span></td></tr>
+    <tr><td colspan="5"></td><td style="padding-left:16px;">지각</td><td><span class="box">${totalLate || ''}</span></td><td style="padding-left:6px;">조퇴</td><td><span class="box">${totalEarly || ''}</span></td></tr>
   </table>
 </div>
 <div class="ym-row">
@@ -289,13 +346,6 @@ tr.mr, tr.er { page-break-inside: avoid; }
 
   /* ── 공개 API ────────────────────────────────────────────── */
   return {
-    /**
-     * @param {number} year
-     * @param {number} month
-     * @param {string} [companyName]
-     * @param {string|null} [deptFilter]  부서명 (null = 전체)
-     * @param {object|null} [ws]          부서 근무 설정
-     */
     async print(year, month, companyName = '', deptFilter = null, ws = null) {
       const html = await generateHTML(year, month, companyName, deptFilter, ws);
       const win  = window.open('', '_blank', 'width=1400,height=900');

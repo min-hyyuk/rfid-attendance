@@ -8,8 +8,8 @@
  *
  * 로그 ID 형식: LOG20260312001
  *
- * ws (근무 설정) 는 부서별로 다를 수 있으므로 외부에서 주입받음.
- * 미전달 시 기본값 사용.
+ * ws (근무 설정) 는 부서별 또는 개인별로 다를 수 있음.
+ * 휴가(leaves) 상태에 따라 ws가 자동 조정됨.
  */
 const Attendance = (() => {
   const DEFAULT_WS = {
@@ -107,7 +107,45 @@ const Attendance = (() => {
     return `${Math.floor(diff / 60)}시간 ${diff % 60}분`;
   }
 
+  /**
+   * 휴가 유형에 따라 ws를 조정
+   * @param {object} ws  원본 근무 설정
+   * @param {object} leave  휴가 레코드 (null이면 조정 없음)
+   * @returns {object|null}  null이면 출근 불필요 (휴가)
+   */
+  function getAdjustedWs(ws, leave) {
+    if (!leave) return ws;
+    switch (leave.type) {
+      case '휴가':
+        return null; // 출근 불필요
+      case '조퇴':
+        return { ...ws, early_min: 999 }; // 조퇴 페널티 제거
+      case '반차': {
+        // 근무시간 절반 조정: 후반부만 근무
+        const startMin = toMin(ws.start);
+        const endMin   = toMin(ws.end);
+        const mid      = Math.round((startMin + endMin) / 2);
+        const midStr   = `${String(Math.floor(mid / 60)).padStart(2, '0')}:${String(mid % 60).padStart(2, '0')}`;
+        return { ...ws, start: midStr, late_min: 0 };
+      }
+      case '반반차': {
+        // 근무시간 1/4 감소: 3/4만 근무
+        const startMin = toMin(ws.start);
+        const endMin   = toMin(ws.end);
+        const quarter  = Math.round((endMin - startMin) / 4);
+        const newStart = startMin + quarter;
+        const newStartStr = `${String(Math.floor(newStart / 60)).padStart(2, '0')}:${String(newStart % 60).padStart(2, '0')}`;
+        return { ...ws, start: newStartStr, late_min: 0 };
+      }
+      default:
+        return ws;
+    }
+  }
+
   return {
+    /** ws 조정 (외부에서도 사용 가능) */
+    getAdjustedWs,
+
     /**
      * 카드 태그 처리
      * @param {string} cardId
@@ -133,15 +171,25 @@ const Attendance = (() => {
     },
 
     /** 내부: 직원 객체로 출퇴근 처리 */
-    async _processEmployee(employee, effectiveWs) {
-      const today    = todayStr();
+    async _processEmployee(employee, deptWs) {
+      // 개인 근무설정 적용
+      const baseWs = await Storage.getEffectiveWorkSettings(employee, deptWs);
+
+      // 오늘 휴가 확인
+      const today = todayStr();
+      const leave = await Storage.getLeavesByEmpAndDate(employee.id, today);
+      const effectiveWs = getAdjustedWs(baseWs, leave);
+
+      // 휴가인 경우 안내 (태그는 정상 처리)
+      const leaveType = leave?.type || null;
+
       const empLogs  = (await Storage.getLogsByDate(today)).filter(l => l.emp_id === employee.id);
       const checkin  = empLogs.find(l => l.type === '출근');
       const checkout = empLogs.find(l => l.type === '퇴근');
 
       if (checkin && checkout) {
         return {
-          success: false, type: 'already_done', employee,
+          success: false, type: 'already_done', employee, leaveType,
           message: `${employee.name}님은 오늘 이미 퇴근 완료하였습니다.`,
         };
       }
@@ -162,11 +210,12 @@ const Attendance = (() => {
       await Storage.addAttendanceLog(log);
 
       const tStr          = timeStr(log.timestamp);
-      const lateMin       = type === '출근' ? calcLateMin(tStr, effectiveWs)      : 0;
-      const earlyLeaveMin = type === '퇴근' ? calcEarlyLeaveMin(tStr, effectiveWs) : 0;
+      const wsForCalc     = effectiveWs || baseWs;
+      const lateMin       = type === '출근' ? calcLateMin(tStr, wsForCalc)      : 0;
+      const earlyLeaveMin = type === '퇴근' ? calcEarlyLeaveMin(tStr, wsForCalc) : 0;
 
       return {
-        success: true, type, employee, log,
+        success: true, type, employee, log, leaveType,
         timeStr: tStr, lateMin, earlyLeaveMin,
         message: `${employee.name} ${type} (${tStr})`,
       };
@@ -175,12 +224,13 @@ const Attendance = (() => {
     /**
      * 오늘 전체 직원 출퇴근 현황
      * @param {string|null} deptFilter  부서명 필터 (null = 전체)
-     * @param {object|null} ws          근무 설정
+     * @param {object|null} ws          부서 근무 설정
      */
     async getTodayStatus(deptFilter = null, ws = null) {
-      const effectiveWs = ws || DEFAULT_WS;
-      const today       = todayStr();
-      const todayLogs   = await Storage.getLogsByDate(today);
+      const deptWs    = ws || DEFAULT_WS;
+      const today     = todayStr();
+      const todayLogs = await Storage.getLogsByDate(today);
+      const leaveMap  = await Storage.getLeaveMap(today, today);
 
       let employees = await Employees.getAll();
       if (deptFilter) employees = employees.filter(e => e.dept === deptFilter);
@@ -189,19 +239,27 @@ const Attendance = (() => {
         const empLogs  = todayLogs.filter(l => l.emp_id === emp.id);
         const checkin  = empLogs.find(l => l.type === '출근');
         const checkout = empLogs.find(l => l.type === '퇴근');
+        const leave    = leaveMap[`${emp.id}_${today}`] || null;
+
+        // 개인 ws 적용
+        const baseWs     = emp.work_settings ? { ...DEFAULT_WS, ...emp.work_settings } : deptWs;
+        const effectiveWs = getAdjustedWs(baseWs, leave);
 
         let status = 'absent';
-        if (checkin && checkout) status = 'left';
-        else if (checkin)        status = 'present';
+        if (leave?.type === '휴가') status = 'leave';
+        else if (checkin && checkout) status = 'left';
+        else if (checkin)             status = 'present';
+        else if (leave)               status = 'leave'; // 반차/반반차/조퇴 등록했는데 아직 미출근이면 leave 표시
 
+        const wsForCalc     = effectiveWs || baseWs;
         const checkInTime   = checkin  ? timeStr(checkin.timestamp)  : null;
         const checkOutTime  = checkout ? timeStr(checkout.timestamp) : null;
         const duration      = (checkInTime && checkOutTime)
-          ? calcDuration(checkInTime, checkOutTime, effectiveWs) : null;
-        const lateMin       = checkInTime  ? calcLateMin(checkInTime, effectiveWs)       : 0;
-        const earlyLeaveMin = checkOutTime ? calcEarlyLeaveMin(checkOutTime, effectiveWs) : 0;
+          ? calcDuration(checkInTime, checkOutTime, wsForCalc) : null;
+        const lateMin       = checkInTime  ? calcLateMin(checkInTime, wsForCalc)       : 0;
+        const earlyLeaveMin = checkOutTime ? calcEarlyLeaveMin(checkOutTime, wsForCalc) : 0;
 
-        return { employee: emp, status, checkInTime, checkOutTime, duration, lateMin, earlyLeaveMin };
+        return { employee: emp, status, checkInTime, checkOutTime, duration, lateMin, earlyLeaveMin, leaveType: leave?.type || null };
       });
     },
 
@@ -217,6 +275,7 @@ const Attendance = (() => {
         present: statuses.filter(s => s.status === 'present').length,
         left:    statuses.filter(s => s.status === 'left').length,
         absent:  statuses.filter(s => s.status === 'absent').length,
+        leave:   statuses.filter(s => s.status === 'leave').length,
       };
     },
 
@@ -228,9 +287,17 @@ const Attendance = (() => {
      * @param {object|null} ws
      */
     async queryLogs(startDate, endDate, empId = null, ws = null) {
-      const effectiveWs = ws || DEFAULT_WS;
+      const deptWs = ws || DEFAULT_WS;
       let logs = await Storage.getLogsByDateRange(startDate, endDate);
       if (empId) logs = logs.filter(l => l.emp_id === empId);
+
+      // 휴가 맵 + 직원 맵 로드
+      const [leaveMap, allEmps] = await Promise.all([
+        Storage.getLeaveMap(startDate, endDate),
+        Employees.getAll(),
+      ]);
+      const empMap = {};
+      allEmps.forEach(e => { empMap[e.id] = e; });
 
       const byKey = {};
       logs.forEach(log => {
@@ -242,6 +309,7 @@ const Attendance = (() => {
             dept: log.dept || '',
             checkIn: null, checkOut: null, duration: null,
             lateMin: 0, earlyLeaveMin: 0, synced: true,
+            leaveType: null,
           };
         }
         if (log.type === '출근') byKey[key].checkIn  = timeStr(log.timestamp);
@@ -250,9 +318,15 @@ const Attendance = (() => {
 
       const rows = Object.values(byKey);
       rows.forEach(r => {
-        if (r.checkIn && r.checkOut) r.duration = calcDuration(r.checkIn, r.checkOut, effectiveWs);
-        r.lateMin       = r.checkIn  ? calcLateMin(r.checkIn, effectiveWs)       : 0;
-        r.earlyLeaveMin = r.checkOut ? calcEarlyLeaveMin(r.checkOut, effectiveWs) : 0;
+        const emp   = empMap[r.emp_id];
+        const baseWs = (emp?.work_settings) ? { ...DEFAULT_WS, ...emp.work_settings } : deptWs;
+        const leave  = leaveMap[`${r.emp_id}_${r.date}`] || null;
+        const adjWs  = getAdjustedWs(baseWs, leave) || baseWs;
+
+        r.leaveType = leave?.type || null;
+        if (r.checkIn && r.checkOut) r.duration = calcDuration(r.checkIn, r.checkOut, adjWs);
+        r.lateMin       = r.checkIn  ? calcLateMin(r.checkIn, adjWs)       : 0;
+        r.earlyLeaveMin = r.checkOut ? calcEarlyLeaveMin(r.checkOut, adjWs) : 0;
       });
 
       return rows.sort((a, b) => b.date.localeCompare(a.date));
@@ -260,9 +334,9 @@ const Attendance = (() => {
 
     /** CSV 내보내기 (동기) */
     exportCSV(rows) {
-      const header = '날짜,이름,부서,출근,퇴근,근무시간,지각(분),조퇴(분)';
+      const header = '날짜,이름,부서,출근,퇴근,근무시간,지각(분),조퇴(분),휴가유형';
       const lines  = rows.map(r =>
-        `${r.date},${r.name},${r.dept},${r.checkIn || ''},${r.checkOut || ''},${r.duration || ''},${r.lateMin || ''},${r.earlyLeaveMin || ''}`
+        `${r.date},${r.name},${r.dept},${r.checkIn || ''},${r.checkOut || ''},${r.duration || ''},${r.lateMin || ''},${r.earlyLeaveMin || ''},${r.leaveType || ''}`
       );
       return [header, ...lines].join('\n');
     },

@@ -286,6 +286,11 @@ a:hover { text-decoration: underline; }
 .scan-panel .scan-time { font-size: 1rem; color: var(--gray-600); font-variant-numeric: tabular-nums; }
 .scan-panel .scan-card { font-size: .8rem; color: var(--gray-500); font-family: monospace; }
 .scan-panel .scan-hint { font-size: .9rem; color: var(--gray-500); }
+.scan-panel .scan-leave-badge {
+  display: inline-block; margin-top: 6px; padding: 2px 12px;
+  background: #dcfce7; color: #16a34a; border-radius: 12px;
+  font-size: .8rem; font-weight: 700;
+}
 
 /* 플래시 애니메이션 */
 @keyframes flashIn {
@@ -571,6 +576,7 @@ a:hover { text-decoration: underline; }
 .ep-stat.present { color: var(--success); }
 .ep-stat.left    { color: var(--info); }
 .ep-stat.absent  { color: var(--gray-400); }
+.ep-stat.leave   { color: #16a34a; }
 
 /* 스크롤 가능한 직원 리스트 */
 .emp-list-body {
@@ -602,6 +608,7 @@ a:hover { text-decoration: underline; }
 .ei-dot.present { color: var(--success); filter: drop-shadow(0 0 3px rgba(22,163,74,.5)); }
 .ei-dot.left    { color: var(--info); }
 .ei-dot.absent  { color: var(--gray-300); }
+.ei-dot.leave   { color: #16a34a; font-size: .85rem; }
 
 /* 이름/부서 */
 .ei-info { flex: 1; min-width: 0; }
@@ -704,6 +711,7 @@ a:hover { text-decoration: underline; }
 
 .ei-badge.late  { background: #ffe4cc; color: #cc4400; }
 .ei-badge.early { background: #cce0ff; color: #0055aa; }
+.ei-badge.leave { background: #dcfce7; color: #16a34a; }
 
 /* 수동 출퇴근 버튼 */
 .ei-manual-btn {
