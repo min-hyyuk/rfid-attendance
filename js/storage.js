@@ -67,15 +67,24 @@ const Storage = (() => {
       );
     },
 
-    /** 단건 INSERT — Supabase에 직접 기록이므로 synced = true 고정 */
+    /** 단건 INSERT — 중복 log_id 충돌 시 자동 재시도 (최대 5회) */
     async addAttendanceLog(log) {
-      const { data, error } = await _db
-        .from('attendance_logs')
-        .insert({ ...log, synced: true })
-        .select()
-        .single();
-      if (error) throw new Error(error.message);
-      return data;
+      const MAX_RETRY = 5;
+      for (let attempt = 0; attempt < MAX_RETRY; attempt++) {
+        const { data, error } = await _db
+          .from('attendance_logs')
+          .insert({ ...log, synced: true })
+          .select()
+          .single();
+        if (!error) return data;
+        // 중복 키 오류(23505)가 아니면 즉시 throw
+        if (!error.code || error.code !== '23505') throw new Error(error.message);
+        // log_id 재생성 후 재시도
+        const prefix = log.log_id.replace(/\d{3}$/, '');
+        const curNum = parseInt(log.log_id.slice(-3), 10);
+        log.log_id = `${prefix}${String(curNum + attempt + 1).padStart(3, '0')}`;
+      }
+      throw new Error('출퇴근 기록 저장 실패: 중복 ID 재시도 초과');
     },
 
     /** dateStr: 'YYYY-MM-DD' — 로컬 시간 기준 해당 날짜 전체 */
