@@ -596,10 +596,14 @@ if (IS_DEPT_MODE) {
       if (currentSection === 'attendance') {
         handleCardScan(cardId).catch(err => console.error(err));
       } else if (currentSection === 'admin' && currentAdminTab === 'emp') {
-        const input = document.getElementById('fCardId');
-        input.value = cardId;
-        input.classList.add('highlight');
-        setTimeout(() => input.classList.remove('highlight'), 1000);
+        // 수정 모달이 열려있으면 수정 폼에 입력
+        const editModal = document.getElementById('editModal');
+        const target = (editModal && !editModal.hidden)
+          ? document.getElementById('editCardId')
+          : document.getElementById('fCardId');
+        target.value = cardId;
+        target.classList.add('highlight');
+        setTimeout(() => target.classList.remove('highlight'), 1000);
       }
     });
 
@@ -818,7 +822,7 @@ async function renderEmpTable() {
           ${list.map((emp, i) => `
             <tr>
               <td class="text-center" style="color:var(--gray-400);">${i + 1}</td>
-              <td class="mono">${emp.card_id}</td>
+              <td class="mono" style="color:var(--gray-400); font-size:.75rem;">${emp.card_id.slice(0, 8)}…</td>
               <td style="font-weight:600;">${emp.name}</td>
               <td style="font-size:.8125rem;">${emp.hire_date  || '-'}</td>
               <td style="font-size:.8125rem;">${emp.leave_date || '-'}</td>
@@ -872,7 +876,8 @@ async function openEditModal(id) {
   const emp = await Employees.findById(id);
   if (!emp) return;
   document.getElementById('editId').value        = emp.id;
-  document.getElementById('editCardId').value    = emp.card_id;
+  document.getElementById('editCardId').value    = '';
+  document.getElementById('editCardId').placeholder = '변경 시에만 새 카드를 스캔하세요';
   document.getElementById('editName').value      = emp.name;
   document.getElementById('editHireDate').value  = emp.hire_date  || '';
   document.getElementById('editLeaveDate').value = emp.leave_date || '';
@@ -895,11 +900,12 @@ document.getElementById('editSaveBtn').addEventListener('click', async () => {
   const leaveDate = document.getElementById('editLeaveDate').value;
   const alertEl   = document.getElementById('editAlert');
 
-  if (!name)   return showAlert(alertEl, '이름을 입력하세요.', 'danger');
-  if (!cardId) return showAlert(alertEl, '카드 ID를 입력하세요.', 'danger');
+  if (!name) return showAlert(alertEl, '이름을 입력하세요.', 'danger');
 
   try {
-    await Employees.update(id, { card_id: cardId, name, hire_date: hireDate || null, leave_date: leaveDate || null });
+    const updates = { name, hire_date: hireDate || null, leave_date: leaveDate || null };
+    if (cardId) updates.card_id = cardId;  // 새 카드 입력 시에만 변경 (해싱은 Employees.update에서 처리)
+    await Employees.update(id, updates);
     document.getElementById('editModal').hidden = true;
     await renderEmpTable();
   } catch (e) { showAlert(alertEl, e.message, 'danger'); }
