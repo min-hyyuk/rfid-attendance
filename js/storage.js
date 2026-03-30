@@ -286,6 +286,41 @@ const Storage = (() => {
       }
     },
 
+    /**
+     * 카드 ID 해싱 마이그레이션 (1회성)
+     * 평문 card_id → SHA-256 해시로 변환
+     */
+    async migrateCardIdHash() {
+      try {
+        const migrated = await this.getSetting('card_id_hashed');
+        if (migrated === 'true') return;
+
+        // employees 테이블 마이그레이션
+        const emps = _unwrap(await _db.from('employees').select('*'), []);
+        for (const emp of emps) {
+          // 이미 해시된 값(64자 hex)은 건너뜀
+          if (emp.card_id && emp.card_id.length !== 64) {
+            const hashed = await hashCardId(emp.card_id);
+            await _db.from('employees').update({ card_id: hashed }).eq('id', emp.id);
+          }
+        }
+
+        // attendance_logs 테이블 마이그레이션
+        const logs = _unwrap(await _db.from('attendance_logs').select('*'), []);
+        for (const log of logs) {
+          if (log.card_id && log.card_id.length !== 64) {
+            const hashed = await hashCardId(log.card_id);
+            await _db.from('attendance_logs').update({ card_id: hashed }).eq('log_id', log.log_id);
+          }
+        }
+
+        await this.setSetting('card_id_hashed', 'true');
+        console.log('카드 ID 해싱 마이그레이션 완료');
+      } catch (e) {
+        console.warn('카드 ID 해싱 마이그레이션 스킵:', e.message);
+      }
+    },
+
     /** Supabase 클라이언트 직접 접근 */
     get client() { return _db; },
   };

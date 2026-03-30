@@ -631,10 +631,10 @@ async function handleCardScan(cardId) {
 }
 
 /** 수동 출퇴근 등록 (카드 미소지 시) — 전역 함수 (onclick에서 호출) */
-async function manualRegister(cardId) {
+async function manualRegister(empId) {
   try {
     const ws     = await Storage.getDeptWorkSettings(currentDept.id);
-    const result = await Attendance.processTag(cardId, ws);
+    const result = await Attendance.processTagByEmpId(empId, ws);
     showScanResult(result);
     await renderRightPanel(result.success ? result.employee?.id : null);
   } catch (e) { console.error(e); }
@@ -670,7 +670,6 @@ function showScanResult(result) {
     panel.innerHTML = `
       <div class="scan-icon">&#10067;</div>
       <div class="scan-type">미등록 카드</div>
-      <div class="scan-card">${result.cardId}</div>
       <div class="scan-hint"><a href="#admin" onclick="navigate('admin')">관리 페이지</a>에서 등록하세요.</div>`;
 
   } else if (result.type === 'already_done') {
@@ -691,8 +690,7 @@ function showScanResult(result) {
       <div class="scan-type">출근${result.lateMin > 0 ? ' (지각)' : ''}</div>
       <div class="scan-name">${result.employee.name}</div>
       <div class="scan-time">${result.employee.dept ? result.employee.dept + '&nbsp;&nbsp;·&nbsp;&nbsp;' : ''}${result.timeStr}</div>
-      ${lateNote}
-      <div class="scan-card">카드: ${result.log.card_id}</div>`;
+      ${lateNote}`;
     speakResult(result.employee.name, '출근');
 
   } else if (result.type === '퇴근') {
@@ -704,8 +702,7 @@ function showScanResult(result) {
       <div class="scan-type">퇴근${result.earlyLeaveMin > 0 ? ' (조퇴)' : ''}</div>
       <div class="scan-name">${result.employee.name}</div>
       <div class="scan-time">${result.employee.dept ? result.employee.dept + '&nbsp;&nbsp;·&nbsp;&nbsp;' : ''}${result.timeStr}</div>
-      ${earlyNote}
-      <div class="scan-card">카드: ${result.log.card_id}</div>`;
+      ${earlyNote}`;
     speakResult(result.employee.name, '퇴근');
   }
 
@@ -765,7 +762,7 @@ async function renderRightPanel(flashEmpId = null) {
         <div class="ei-t ${s.checkOutTime ? 'out' : 'none'}">퇴근&nbsp;${s.checkOutTime || '--:--'}</div>
       </div>
       <button class="ei-manual-btn" title="수동 출퇴근"
-              onclick="manualRegister('${s.employee.card_id}')">수동</button>
+              onclick="manualRegister('${s.employee.id}')">수동</button>
     </div>`;
   }).join('');
 
@@ -1324,8 +1321,9 @@ function showAlert(el, msg, type) {
    18. 비동기 초기화
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 (async () => {
-  // UTC→KST 마이그레이션 (기존 기록 시간 보정)
+  // 1회성 마이그레이션
   await Storage.migrateUtcToKst();
+  await Storage.migrateCardIdHash();
 
   // 부서 모드: Supabase에서 부서 정보 로드
   if (DEPT_ID) {

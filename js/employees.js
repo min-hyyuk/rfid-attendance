@@ -20,7 +20,8 @@ const Employees = (() => {
     },
 
     async findByCardId(cardId) {
-      return Storage.findEmployeeByCardId(cardId);
+      const hashed = await hashCardId(cardId);
+      return Storage.findEmployeeByCardId(hashed);
     },
 
     async findById(id) {
@@ -43,7 +44,7 @@ const Employees = (() => {
 
       const emp = {
         id:         await generateId(),
-        card_id:    cardId.trim(),
+        card_id:    await hashCardId(cardId.trim()),
         name:       name.trim(),
         dept:       dept.trim(),
         hire_date:  hireDate  || null,
@@ -63,9 +64,13 @@ const Employees = (() => {
       const emp = await this.findById(id);
       if (!emp) throw new Error('직원을 찾을 수 없습니다.');
 
-      if (updates.card_id && updates.card_id !== emp.card_id) {
-        const dup = await this.findByCardId(updates.card_id);
-        if (dup) throw new Error(`이미 등록된 카드입니다. (${dup.name})`);
+      if (updates.card_id) {
+        const hashedNew = await hashCardId(updates.card_id);
+        if (hashedNew !== emp.card_id) {
+          const dup = await Storage.findEmployeeByCardId(hashedNew);
+          if (dup) throw new Error(`이미 등록된 카드입니다. (${dup.name})`);
+        }
+        updates.card_id = hashedNew;
       }
 
       const updated = { ...emp, ...updates };

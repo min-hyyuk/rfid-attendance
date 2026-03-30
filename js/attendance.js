@@ -118,9 +118,22 @@ const Attendance = (() => {
       const employee    = await Employees.findByCardId(cardId);
 
       if (!employee) {
-        return { success: false, type: 'unknown', cardId, message: `미등록 카드: ${cardId}` };
+        return { success: false, type: 'unknown', cardId, message: `미등록 카드` };
       }
 
+      return this._processEmployee(employee, effectiveWs);
+    },
+
+    /** 수동 출퇴근 등록 (emp_id 기반, 해싱 불필요) */
+    async processTagByEmpId(empId, ws = null) {
+      const effectiveWs = ws || DEFAULT_WS;
+      const employee    = await Employees.findById(empId);
+      if (!employee) throw new Error('직원을 찾을 수 없습니다.');
+      return this._processEmployee(employee, effectiveWs);
+    },
+
+    /** 내부: 직원 객체로 출퇴근 처리 */
+    async _processEmployee(employee, effectiveWs) {
       const today    = todayStr();
       const empLogs  = (await Storage.getLogsByDate(today)).filter(l => l.emp_id === employee.id);
       const checkin  = empLogs.find(l => l.type === '출근');
@@ -137,7 +150,7 @@ const Attendance = (() => {
       const now  = new Date();
       const log  = {
         log_id:    await generateLogId(),
-        card_id:   cardId,
+        card_id:   employee.card_id,
         emp_id:    employee.id,
         name:      employee.name,
         dept:      employee.dept || '',
