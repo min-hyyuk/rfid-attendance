@@ -120,23 +120,12 @@ const Attendance = (() => {
         return null; // 출근 불필요
       case '조퇴':
         return { ...ws, early_min: 999 }; // 조퇴 페널티 제거
-      case '반차': {
-        // 근무시간 절반 조정: 후반부만 근무
-        const startMin = toMin(ws.start);
-        const endMin   = toMin(ws.end);
-        const mid      = Math.round((startMin + endMin) / 2);
-        const midStr   = `${String(Math.floor(mid / 60)).padStart(2, '0')}:${String(mid % 60).padStart(2, '0')}`;
-        return { ...ws, start: midStr, late_min: 0 };
-      }
-      case '반반차': {
-        // 근무시간 1/4 감소: 3/4만 근무
-        const startMin = toMin(ws.start);
-        const endMin   = toMin(ws.end);
-        const quarter  = Math.round((endMin - startMin) / 4);
-        const newStart = startMin + quarter;
-        const newStartStr = `${String(Math.floor(newStart / 60)).padStart(2, '0')}:${String(newStart % 60).padStart(2, '0')}`;
-        return { ...ws, start: newStartStr, late_min: 0 };
-      }
+      case '반차':
+        // 오전/오후 구분 없이 기록만 → 지각·조퇴 판정 제거
+        return { ...ws, late_min: 999, early_min: 999 };
+      case '반반차':
+        // 1/4일 사용 → 지각·조퇴 판정 제거
+        return { ...ws, late_min: 999, early_min: 999 };
       default:
         return ws;
     }
