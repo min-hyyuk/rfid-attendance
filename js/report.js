@@ -136,10 +136,12 @@ const Report = (() => {
     const holidays = allHolidays.filter(h => h.date >= startDate && h.date <= endDate);
     const attMap   = buildAttMap(employees, logs);
 
-    // 해당 월에 출근 기록 또는 휴가가 있는 직원만 표시
-    const logEmpIds = new Set(logs.map(l => l.emp_id));
-    const leaveEmpIds = new Set(Object.values(leaveMap).map(l => l.emp_id));
-    employees = employees.filter(e => logEmpIds.has(e.id) || leaveEmpIds.has(e.id));
+    // 해당 월에 재직 중인 직원만 표시 (입사일이 월 이후이거나 퇴사일이 월 이전이면 제외)
+    employees = employees.filter(e => {
+      if (e.hire_date  && e.hire_date  > endDate)   return false; // 입사 전
+      if (e.leave_date && e.leave_date < startDate) return false; // 퇴사 후
+      return true;
+    });
 
     // 전체 요약 집계
     let totalLeave = 0, totalLate = 0, totalAbsent = 0, totalEarly = 0;
