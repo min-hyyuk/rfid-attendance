@@ -136,6 +136,11 @@ const Report = (() => {
     const holidays = allHolidays.filter(h => h.date >= startDate && h.date <= endDate);
     const attMap   = buildAttMap(employees, logs);
 
+    // 해당 월에 출근 기록 또는 휴가가 있는 직원만 표시
+    const logEmpIds = new Set(logs.map(l => l.emp_id));
+    const leaveEmpIds = new Set(Object.values(leaveMap).map(l => l.emp_id));
+    employees = employees.filter(e => logEmpIds.has(e.id) || leaveEmpIds.has(e.id));
+
     // 전체 요약 집계
     let totalLeave = 0, totalLate = 0, totalAbsent = 0, totalEarly = 0;
 
