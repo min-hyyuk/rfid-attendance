@@ -777,6 +777,14 @@ function showScanResult(result) {
       <div class="scan-type">미등록 카드</div>
       <div class="scan-hint"><a href="#admin" onclick="navigate('admin')">관리 페이지</a>에서 등록하세요.</div>`;
 
+  } else if (result.type === 'too_soon') {
+    panel.classList.add('scan-already');
+    panel.innerHTML = `
+      <div class="scan-icon">&#9200;</div>
+      <div class="scan-type">퇴근 대기</div>
+      <div class="scan-name">${result.employee.name}</div>
+      <div class="scan-hint">${result.message}</div>`;
+
   } else if (result.type === 'already_done') {
     panel.classList.add('scan-already');
     panel.innerHTML = `

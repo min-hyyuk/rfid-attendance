@@ -183,6 +183,20 @@ const Attendance = (() => {
         };
       }
 
+      // 출근 후 3분 이내 퇴근 방지
+      if (checkin && !checkout) {
+        const checkinTime = new Date(checkin.timestamp.replace('T', ' '));
+        const now2 = new Date();
+        const diffSec = (now2 - checkinTime) / 1000;
+        if (diffSec < 180) {
+          const remain = Math.ceil((180 - diffSec) / 60);
+          return {
+            success: false, type: 'too_soon', employee, leaveType,
+            message: `${employee.name}님, 출근 후 ${remain}분 뒤에 퇴근 가능합니다.`,
+          };
+        }
+      }
+
       const type = checkin ? '퇴근' : '출근';
       const now  = new Date();
       const log  = {
