@@ -12,6 +12,10 @@
  * 휴가(leaves) 상태에 따라 ws가 자동 조정됨.
  */
 const Attendance = (() => {
+  // 출근 후 3분간 퇴근 방지 — 인메모리 추적 (emp_id → 출근 시각 ms)
+  const _checkinTimeMap = new Map();
+  const CHECKOUT_BLOCK_MS = 180_000; // 3분
+
   const DEFAULT_WS = {
     start: '09:00', end: '18:00',
     late_min: 0, early_min: 0,
@@ -183,17 +187,11 @@ const Attendance = (() => {
         };
       }
 
-      // 출근 후 3분 이내 퇴근 방지
+      // 출근 후 3분 이내 퇴근 방지 (인메모리 추적)
       if (checkin && !checkout) {
-        // 로컬 ISO 문자열을 직접 파싱 (new Date() 타임존 문제 방지)
-        const ts = checkin.timestamp; // "2026-03-30T09:05:00"
-        const [dp, tp] = ts.split('T');
-        const [yr, mo, dy] = dp.split('-').map(Number);
-        const [hh, mm, ss] = tp.split(':').map(Number);
-        const checkinMs = new Date(yr, mo - 1, dy, hh, mm, ss).getTime();
-        const diffSec = (Date.now() - checkinMs) / 1000;
-        if (diffSec < 180) {
-          const remain = Math.ceil((180 - diffSec) / 60);
+        const lastCheckin = _checkinTimeMap.get(employee.id);
+        if (lastCheckin && (Date.now() - lastCheckin) < CHECKOUT_BLOCK_MS) {
+          const remain = Math.ceil((CHECKOUT_BLOCK_MS - (Date.now() - lastCheckin)) / 60000);
           return {
             success: false, type: 'too_soon', employee, leaveType,
             message: `${employee.name}님, 출근 후 ${remain}분 뒤에 퇴근 가능합니다.`,
@@ -215,6 +213,11 @@ const Attendance = (() => {
       };
 
       await Storage.addAttendanceLog(log);
+
+      // 출근 시 인메모리에 시각 기록 (3분 퇴근 방지용)
+      if (type === '출근') {
+        _checkinTimeMap.set(employee.id, Date.now());
+      }
 
       const tStr          = timeStr(log.timestamp);
       const wsForCalc     = effectiveWs || baseWs;
