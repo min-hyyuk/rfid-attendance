@@ -185,9 +185,13 @@ const Attendance = (() => {
 
       // 출근 후 3분 이내 퇴근 방지
       if (checkin && !checkout) {
-        const checkinTime = new Date(checkin.timestamp);
-        const now2 = new Date();
-        const diffSec = (now2 - checkinTime) / 1000;
+        // 로컬 ISO 문자열을 직접 파싱 (new Date() 타임존 문제 방지)
+        const ts = checkin.timestamp; // "2026-03-30T09:05:00"
+        const [dp, tp] = ts.split('T');
+        const [yr, mo, dy] = dp.split('-').map(Number);
+        const [hh, mm, ss] = tp.split(':').map(Number);
+        const checkinMs = new Date(yr, mo - 1, dy, hh, mm, ss).getTime();
+        const diffSec = (Date.now() - checkinMs) / 1000;
         if (diffSec < 180) {
           const remain = Math.ceil((180 - diffSec) / 60);
           return {
