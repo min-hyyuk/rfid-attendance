@@ -720,29 +720,39 @@ if (IS_DEPT_MODE) {
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    6. 카드 스캔 처리 (부서 모드)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+let _scanBusy = false;
 async function handleCardScan(cardId) {
-  const emp = await Employees.findByCardId(cardId);
+  if (_scanBusy) return;
+  _scanBusy = true;
+  try {
+    const emp = await Employees.findByCardId(cardId);
 
-  // 타 부서 직원 → 로그 저장 없이 안내만
-  if (emp && emp.dept !== currentDept.name) {
-    showScanResult({ type: 'wrong_dept', employee: emp });
-    return;
-  }
+    // 타 부서 직원 → 로그 저장 없이 안내만
+    if (emp && emp.dept !== currentDept.name) {
+      showScanResult({ type: 'wrong_dept', employee: emp });
+      return;
+    }
 
-  const ws     = await Storage.getDeptWorkSettings(currentDept.id);
-  const result = await Attendance.processTag(cardId, ws);
-  showScanResult(result);
-  await renderRightPanel(result.success ? result.employee?.id : null);
+    const ws     = await Storage.getDeptWorkSettings(currentDept.id);
+    const result = await Attendance.processTag(cardId, ws);
+    showScanResult(result);
+    await renderRightPanel(result.success ? result.employee?.id : null);
+  } catch (e) { console.error(e); }
+  finally { _scanBusy = false; }
 }
 
 /** 수동 출퇴근 등록 (카드 미소지 시) — 전역 함수 (onclick에서 호출) */
+let _manualBusy = false;
 async function manualRegister(empId) {
+  if (_manualBusy) return;
+  _manualBusy = true;
   try {
     const ws     = await Storage.getDeptWorkSettings(currentDept.id);
     const result = await Attendance.processTagByEmpId(empId, ws);
     showScanResult(result);
     await renderRightPanel(result.success ? result.employee?.id : null);
   } catch (e) { console.error(e); }
+  finally { _manualBusy = false; }
 }
 
 /** 음성 안내 (Web Speech API) */
